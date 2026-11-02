@@ -1,0 +1,262 @@
+name: Release
+
+# Two ways in:
+#   - push to main: release-please keeps a "chore(main): release X.Y.Z" PR up to date.
+#     Merging that PR tags vX.Y.Z, creates the GitHub Release, and the jobs below
+#     build, sign and publish it in this same run (a tag created with GITHUB_TOKEN
+#     does not start another workflow).
+#   - push of a prerelease tag by hand: build, sign, publish to npm under that
+#     kind's dist-tag. `latest` never moves for a prerelease.
+#       vX.Y.Z-alpha.N  -> npm `alpha`  (early, may change a lot)
+#       vX.Y.Z-beta.N   -> npm `beta`   (feature complete, still testing)
+#       vX.Y.Z-rc.N     -> npm `next`   (release candidate)
+on:
+  push:
+    branches: [main]
+    tags: ["v*-alpha.*", "v*-beta.*", "v*-rc.*"]
+
+permissions: {}
+
+# Queue instead of cancelling: a half-finished release is worse than a wait.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag + GitHub Release
+      pull-requests: write # the release PR
+    outputs:
+      created: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  goreleaser:
+    needs: release-please
+    # release-please is skipped on a tag push, so `needs` alone would skip this job.
+    if: ${{ !cancelled() && (needs.release-please.outputs.created == 'true' || github.ref_type == 'tag') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach archives to the GitHub Release
+      id-token: write # cosign keyless signing (OIDC)
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        run: echo "tag=${{ needs.release-please.outputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      # Git tags are mutable, commit SHAs are not. The tj-actions/changed-files
+      # incident (03/2025) was a re-pointed tag. Pin by full SHA; let Dependabot
+      # move them, never by hand.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0 # GoReleaser needs full history + tags
+      # A tag can point at any commit, including one that never went through a PR.
+      # Only a commit already on main is built, signed and published.
+      - name: the tag must be on main
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "refs/tags/$TAG^{commit}" FETCH_HEAD; then
+            echo "::error::$TAG points at a commit that is not on main. Merge the change through a PR, then tag a commit of main."
+            exit 1
+          fi
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # Pinned to all three digits. "1.26" floats the patch and the runner takes
+          # whatever it has, so one tag could produce two different binaries.
+          go-version: "1.26.10"
+          # The release job must not reuse a build cache any branch can write.
+          # A poisoned cache would be signed by cosign and listed in
+          # checksums.txt entirely faithfully. 1-2 minutes for a clean chain.
+          cache: false
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: v2.5.2 # .sig + .pem output; npm/build-packages.js verifies that pair
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: "v2.19.0"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.tag }}
+
+      # Hand dist/ to the npm job. NOT `gh release download`: what Releases serves has
+      # no artifacts.json / metadata.json, so the npm job would have to parse filenames
+      # to learn each artifact's platform.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  # The npm/npx channel. A SEPARATE job, not a step in the one above:
+  #   1. npm publish rights must not exist in a step that can write the repository;
+  #   2. if npm publish fails the GitHub release still stands, and this job reruns
+  #      on its own;
+  #   3. the job above needs Go, this one needs Node.
+  #
+  # This job must stay in release.yml: npm trusted publishing checks the workflow
+  # FILE NAME, and moving it to a reusable workflow makes npm stop recognising it.
+  #
+  npm:
+    needs: goreleaser
+    if: ${{ !cancelled() && needs.goreleaser.result == 'success' }}
+    runs-on: ubuntu-latest # trusted publishing only works on GitHub-hosted runners
+    # Forces a human approval once the repository is public. On a private repository of
+    # the GitHub Free plan the reviewers rule does not apply, so until then the gate is
+    # who can push to main or push a v*-rc.* tag.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC)
+    # No npm token anywhere: each of the 7 packages has a trusted publisher bound to
+    # this repository + release.yml (`npm trust github … --allow-publish`), and npm
+    # exchanges the job's OIDC token inside `npm publish`. The packages were created
+    # once by hand with `npm stage publish` (see CONTRIBUTING.md, "First-time setup").
+    env:
+      TAG: ${{ needs.goreleaser.outputs.tag }}
+      NPM_PROVENANCE: ${{ vars.NPM_PROVENANCE }}
+      REPO_PRIVATE: ${{ github.event.repository.private }}
+    steps:
+      # npm refuses --provenance from a private source repository. While the repository
+      # is private the variable NPM_PROVENANCE stays unset and every release, `latest`
+      # included, publishes WITHOUT provenance (decided for 0.1.0: users get the default
+      # `npm i -g sepay-cli` now; versions published this way never gain provenance).
+      # Once the repository is public this step refuses to publish until
+      # NPM_PROVENANCE=true, so the weaker mode cannot outlive the reason for it.
+      # Fails in seconds, before anything is built or published.
+      - name: provenance must match the repository visibility
+        run: |
+          if [ "$REPO_PRIVATE" = "true" ]; then
+            if [ "$NPM_PROVENANCE" = "true" ]; then
+              echo "::error::NPM_PROVENANCE=true but the repository is private: npm refuses --provenance from a private repository."
+              exit 1
+            fi
+            echo "::warning::the repository is private: publishing WITHOUT provenance."
+          else
+            if [ "$NPM_PROVENANCE" != "true" ]; then
+              echo "::error::the repository is public: set the repository variable NPM_PROVENANCE=true, then release again."
+              exit 1
+            fi
+            echo "PROVENANCE=--provenance" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.goreleaser.outputs.tag }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.4" # >= 22.14.0, required by trusted publishing
+          registry-url: "https://registry.npmjs.org"
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: v2.5.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: npm must be new enough for trusted publishing
+        run: |
+          npm install -g npm@11.21.1
+          need=11.5.1
+          have=$(npm --version)
+          # Fail loudly. Never quietly publish by some other route.
+          [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" = "$need" ] || {
+            echo "::error::npm $have < $need — trusted publishing will not work"
+            exit 1
+          }
+          echo "npm $have, node $(node --version)"
+
+      # Only a final version moves `latest`; each prerelease kind has its own tag
+      # (see the trigger list at the top). Set inside each `npm publish` so the
+      # version and its tag land in one authenticated call.
+      - name: pick the dist-tag
+        run: |
+          case "$TAG" in
+            *-alpha.*) tag=alpha ;;
+            *-beta.*)  tag=beta ;;
+            *-rc.*)    tag=next ;;
+            *-*)
+              echo "::error::$TAG is a prerelease of an unknown kind (use -alpha.N, -beta.N or -rc.N)"
+              exit 1 ;;
+            *)         tag=latest ;;
+          esac
+          echo "DIST_TAG=$tag" >> "$GITHUB_ENV"
+
+      # Step 1 — build the packages. The checksum table must derive from the SIGNED
+      # checksums.txt; --require-signature turns "unsigned" from a note into an error.
+      - name: build the 7 packages from the signed archives
+        run: |
+          node npm/build-packages.js --require-signature
+          node npm/verify.js
+
+      # Step 2 — the gate against a reused version.
+      # It must FAIL CLOSED: only 404 means "not there". Every other code (000 on a DNS
+      # failure, 429, 5xx) means "unknown", and a duplicate-check that reads "unknown"
+      # as "not there" is decoration.
+      - name: all 7 names must be free at this version
+        run: |
+          v=$(node -p "require('./dist/npm/sepay/package.json').version")
+          names="$(node -p "require('./dist/npm/sepay/package.json').name") $(node -p "Object.keys(require('./dist/npm/sepay/package.json').optionalDependencies).join(' ')")"
+          fail=0
+          for name in $names; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --retry 3 --retry-all-errors \
+              --max-time 30 "https://registry.npmjs.org/$name/$v")
+            case "$code" in
+              404) ;;
+              200)
+                echo "::error::$name@$v already exists. Do NOT unpublish: bump the version, tag again, rerun from the start"
+                fail=1 ;;
+              *)
+                echo "::error::could not ask the registry about $name@$v (HTTP $code). Stop; do not assume it is free"
+                fail=1 ;;
+            esac
+          done
+          exit $fail
+
+      - name: dry-run publish all 7
+        run: |
+          for d in dist/npm/*/; do (cd "$d" && npm publish --dry-run --access public --tag "$DIST_TAG"); done
+
+      # Step 3 — the 6 platform packages go first. Their dist-tag carries no meaning:
+      # the wrapper pins exact versions. The only tag that matters is the wrapper's,
+      # published last at step 6.
+      - name: publish the 6 platform packages
+        run: |
+          for d in dist/npm/cli-*/; do (cd "$d" && npm publish --access public $PROVENANCE --tag "$DIST_TAG"); done
+
+      # Step 4 — THE MOST IMPORTANT GATE. Pull the 6 packages back FROM THE REGISTRY (not
+      # from the local dist/), re-hash the binary inside each, and compare against the
+      # table in the still-unpublished wrapper.
+      - name: re-download from the registry and compare checksums
+        run: node npm/verify-published.js --max-wait 600
+
+      # Step 5 — install the exact wrapper tarball about to be published, into a clean
+      # project, with the 6 platform packages coming from the real registry. A failure
+      # here means nothing points at this version yet.
+      - name: install the wrapper before publishing it
+        run: |
+          v=$(node -p "require('./dist/npm/sepay/package.json').version")
+          name=$(cd dist/npm/sepay && npm pack --silent)
+          tgz="$PWD/dist/npm/sepay/$name"
+          t=$(mktemp -d) && cd "$t" && npm init -y >/dev/null
+          npm install --ignore-scripts "$tgz"
+          out=$(./node_modules/.bin/sepay version)
+          echo "$out"
+          echo "$out" | grep -q "$v" || { echo "::error::the installed build is not $v"; exit 1; }
+
+      # Step 6 — THE RELEASE ACTION. One command, and the last one: from this second
+      # `npx sepay-cli@<dist-tag>` points at the new version.
+      - name: publish the wrapper
+        run: cd dist/npm/sepay && npm publish --access public $PROVENANCE --tag "$DIST_TAG"

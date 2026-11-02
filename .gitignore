@@ -1,0 +1,21 @@
+# Build output: make build, make completions, goreleaser
+/bin/
+/completions/
+/dist/
+
+# Go test and profiling output
+*.out
+*.test
+*.prof
+
+# Local scratch, never committed
+/docs/
+/sandbox-test/
+
+# Editor, OS and local assistant files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/
+CLAUDE.md

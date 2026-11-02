@@ -1,0 +1,31 @@
+{
+  "name": "sepay-cli",
+  "version": "0.0.0",
+  "description": "SePay developer CLI",
+  "keywords": ["cli", "sepay", "payments", "vietnam", "webhook"],
+  "homepage": "https://github.com/sepayvn/sepay-cli",
+  "bugs": "https://github.com/sepayvn/sepay-cli/issues",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sepayvn/sepay-cli.git"
+  },
+  "bin": {
+    "sepay": "bin/sepay.js"
+  },
+  "files": ["bin"],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "optionalDependencies": {
+    "@sepayjsc/cli-darwin-arm64": "0.0.0",
+    "@sepayjsc/cli-darwin-x64": "0.0.0",
+    "@sepayjsc/cli-linux-arm64": "0.0.0",
+    "@sepayjsc/cli-linux-x64": "0.0.0",
+    "@sepayjsc/cli-win32-arm64": "0.0.0",
+    "@sepayjsc/cli-win32-x64": "0.0.0"
+  },
+  "sepay": {
+    "binaryHashes": {}
+  }
+}

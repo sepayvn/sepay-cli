@@ -1,0 +1,21 @@
+# Workflow actions are pinned by full commit SHA (see the comment in release.yml).
+# A pin with nobody updating it becomes a pin to a known-vulnerable version, so
+# Dependabot is part of the control, not an optional extra.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # PR titles must be Conventional Commits (ci.yml pr-title); "ci" never cuts a release.
+    commit-message:
+      prefix: ci
+  # Go modules: a PR when a dependency has a new version, and at once for a
+  # security fix. "fix" because a dependency bump changes the shipped binary.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: fix
+      include: scope

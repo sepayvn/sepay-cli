@@ -1,0 +1,30 @@
+# golangci-lint v2 config. Default linters (errcheck, govet, ineffassign,
+# staticcheck, unused) stay on; we add a couple and the formatters.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - misspell
+    - revive
+  settings:
+    errcheck:
+      # Writing to stdout/stderr rarely warrants error handling in a CLI.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Fprintf
+  exclusions:
+    rules:
+      # Every command constructor is NewCmdXxx(f *cmdutil.Factory) by convention
+      # (the DI seam); a stub that doesn't use f yet is intentional, not dead.
+      - linters:
+          - revive
+        text: "unused-parameter"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

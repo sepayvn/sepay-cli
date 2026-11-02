@@ -1,0 +1,83 @@
+version: 2
+
+project_name: sepay
+
+before:
+  hooks:
+    # No `go mod tidy` here: a release must not edit go.mod / go.sum while it builds.
+    # CI checks tidiness instead.
+    - make completions
+
+builds:
+  - id: sepay
+    main: ./cmd/sepay
+    binary: sepay
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    # Keep the build machine's paths out of the shipped binary.
+    flags: [-trimpath]
+    # Stamp from the commit, not the build clock, so the same commit rebuilds to
+    # the same checksum.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # Inject build info — same variables as the Makefile / internal/build.
+    ldflags:
+      - -s -w
+      - -X github.com/sepayvn/sepay-cli/internal/build.Version={{ .Version }}
+      - -X github.com/sepayvn/sepay-cli/internal/build.Commit={{ .ShortCommit }}
+      - -X github.com/sepayvn/sepay-cli/internal/build.Date={{ .CommitDate }}
+
+archives:
+  - id: sepay
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # File mtimes land in the archive hash, and mtime is each machine's checkout /
+    # generation time. Unpinned, two machines building the same commit produce
+    # archives with different hashes, and checksums.txt would not match a rebuild.
+    files:
+      - src: LICENSE
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: README.md
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: completions/*
+        dst: completions
+        info: { mtime: "{{ .CommitDate }}" }
+
+
+checksum:
+  name_template: checksums.txt
+
+# Keyless signing via cosign (GitHub OIDC) — no stored private key.
+# Signs the checksums file, which covers every artifact.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+release:
+  github:
+    owner: sepayvn
+    name: sepay-cli
+  # release-please creates the GitHub Release (title + notes from CHANGELOG.md);
+  # GoReleaser only attaches the archives and the signed checksums to it. A -rc tag
+  # pushed by hand has no release yet, so GoReleaser creates that one.
+  mode: keep-existing
+  draft: false
+  # Without this a -rc tag becomes GitHub's "latest" release.
+  prerelease: auto
+
+# Release notes come from release-please (CHANGELOG.md), not from GoReleaser.
+changelog:
+  disable: true

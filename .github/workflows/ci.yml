@@ -1,0 +1,237 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # release-please reads commit messages on main to pick the next version and write
+  # CHANGELOG.md. PRs are squash-merged, so the PR title becomes that commit message.
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            build
+            ci
+            chore
+            revert
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # Pinned to all three digits. "1.26" floats the patch and the runner takes
+          # whatever it has: two releases 15 minutes apart picked up go1.26.8 then
+          # go1.26.7, so one tag produced two different binaries. Bumping this is a
+          # deliberate decision, not something to leave to chance.
+          go-version: "1.26.10"
+      - name: gofmt
+        run: |
+          out=$(gofmt -l ./cmd ./pkg ./internal)
+          test -z "$out" || { echo "gofmt needed on:"; echo "$out"; exit 1; }
+      - name: go mod tidy leaves no diff
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
+        with:
+          version: v2.12.2
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.10" # see the comment at the first declaration
+      - run: go test ./... -race
+
+  # Known vulnerabilities in the Go toolchain and the modules we import, reported
+  # only when our code can reach them. A red job here means: bump the Go pin
+  # (go-version, here and in release.yml) or the module, then release a patch.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.10" # see the comment at the first declaration
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  # The repository is public, so anything committed is published, including every
+  # earlier commit. Scans the full history; a fake credential in a test carries
+  # `// gitleaks:allow` at the end of its line.
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.10" # see the comment at the first declaration
+      - name: gitleaks
+        run: go run github.com/zricethezav/gitleaks/v8@v8.21.2 git . --redact
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.10" # see the comment at the first declaration
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+  # Catch a broken .goreleaser.yaml here rather than at tag time — a tag that
+  # half-releases cannot be taken back cleanly.
+  release-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: "v2.19.0" # pinned: the release job must build with a known GoReleaser
+          args: check
+
+  # The npm channel: a slip here is a broken install for a user, not a red build.
+  #
+  # Every action in this file is pinned by full commit SHA: a Git tag can be re-pointed
+  # (tj-actions/changed-files, 03/2025), and this job in particular sees the packages that
+  # go to customers. Dependabot moves them; never by hand.
+  npm-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0 # goreleaser needs tags to derive a version
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.10" # see the comment at the first declaration
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.4"
+
+      - name: JavaScript syntax
+        run: |
+          fail=0
+          for f in $(find npm -name '*.js'); do
+            node --check "$f" || fail=1
+          done
+          exit $fail
+
+      # severity=warning, not the default: the remaining info-level notes are
+      # deliberate. `$(echo pwned)` inside single quotes is the point of case 9, and
+      # `cond && record PASS || record FAIL` is safe because record always succeeds.
+      - name: shellcheck the npm test scripts
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck --severity=warning npm/test-local.sh npm/test-upgrade.sh
+
+      # Three constraints only hold if something stops the code drifting back. Stating
+      # them in prose means someone will re-add them.
+      - name: block the old ways back in
+        run: |
+          fail=0
+          block() { # block <pattern> <why>
+            if grep -rnE "$1" npm/ --include='*.js'; then
+              echo "::error::$2"
+              fail=1
+            fi
+          }
+          block 'shell:\s*true' \
+            'shell: true turns an argument like --ref "a & calc" into two commands'
+          # Matches any `exec(` / `execSync(`, because `cp.exec(` must be caught as well
+          # as `child_process.exec(` and a static scan cannot tell the receiver apart.
+          # It therefore also matches a regex `.exec()`; use `.test()` or `.match()`
+          # there. A guard on a shell-injection path fails closed.
+          block '\bexec(Sync)?\(' \
+            'exec() goes through a shell. Use spawn() with an argument array (a regex .exec() also trips this: use .test() or .match())'
+          block '(process\.env\.[A-Z_]*(BINARY|BIN_PATH|PATH_OVERRIDE))' \
+            'no environment variable may redirect the binary path — it disables the checksum chain'
+          # "scripts" in any package.json of this channel means code runs at install
+          # time. Only the templates in the repo are scanned here, since dist/npm does
+          # not exist yet; the GENERATED manifests, the ones actually published, are
+          # checked by npm/verify.js after the build.
+          for f in $(find npm -name package.json); do
+            if node -e "process.exit(require('./$f').scripts ? 1 : 0)"; then :; else
+              echo "::error::$f declares scripts — no script may run at install time"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      # Build for real before checking. Without this every step below is inspecting an
+      # empty directory and still going green.
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: "v2.19.0" # pinned: the release job must build with a known GoReleaser
+          install-only: true
+      - name: build the 6 binaries
+        run: goreleaser release --clean --snapshot --skip=sign
+      - run: node npm/build-packages.js
+      - run: node npm/verify.js
+
+      # Exercise the real intermediate artifact: pack -> install from the .tgz -> run ->
+      # compare versions. The CI runner is Linux x64, one of the 6 targets. Includes the
+      # failure cases: a flipped byte, a missing platform package, Ctrl-C, exit codes.
+      - name: run the case suite
+        run: bash npm/test-local.sh
+
+      # The error path must be our message, not a Node stack trace.
+      - name: an unsupported machine gets a decent error
+        run: |
+          set +e
+          out=$(node -e "
+            Object.defineProperty(process,'platform',{value:'freebsd'});
+            Object.defineProperty(process,'arch',{value:'arm'});
+            require('./npm/bin/sepay.js');
+          " 2>&1 >/dev/null)
+          code=$?
+          echo "$out"
+          if [ "$code" = "0" ]; then
+            echo "::error::should have exited non-zero"; exit 1
+          fi
+          if ! echo "$out" | grep -q '^Error: unsupported platform'; then
+            echo "::error::missing the Error: unsupported platform line"; exit 1
+          fi
+          if echo "$out" | grep -qE 'at [A-Za-z]+ \(|node:internal'; then
+            echo "::error::leaked a Node stack trace to the user"; exit 1
+          fi
+
+      # Dry-run publish. Catches what only npm knows: names, versions, the bin entry, the
+      # os/cpu declarations, the optional dependencies. --tag next is required because a
+      # CI build is a prerelease, and npm REFUSES to publish a prerelease without a tag.
+      - name: dry-run publish all 7 packages
+        run: |
+          for d in dist/npm/*/; do
+            (cd "$d" && npm publish --dry-run --access public --tag next)
+          done
