@@ -1,6 +1,6 @@
 module github.com/sepayvn/sepay-cli
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
@@ -10,7 +10,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/sys v0.44.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 )
