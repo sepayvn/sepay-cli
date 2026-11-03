@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/sepayvn/sepay-cli/compare/v0.1.1...v0.1.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **release:** publish 0.1.2, 0.1.1 was never published ([a4fffce](https://github.com/sepayvn/sepay-cli/commit/a4fffce989d45a552fdfdf8755deabe1ca1ee9af))
+
 ## [0.1.1](https://github.com/sepayvn/sepay-cli/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
