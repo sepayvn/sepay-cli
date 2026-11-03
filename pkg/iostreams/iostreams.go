@@ -108,6 +108,9 @@ func (s *IOStreams) Green(t string) string { return s.colorize("32", t) }
 // Red wraps t in ANSI red (see Green).
 func (s *IOStreams) Red(t string) string { return s.colorize("31", t) }
 
+// Yellow wraps t in ANSI yellow (see Green).
+func (s *IOStreams) Yellow(t string) string { return s.colorize("33", t) }
+
 // Dim wraps t in ANSI faint (see Green).
 func (s *IOStreams) Dim(t string) string { return s.colorize("2", t) }
 

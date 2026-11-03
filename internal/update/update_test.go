@@ -7,12 +7,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/sepayvn/sepay-cli/internal/build"
 )
 
 func TestNewerThan(t *testing.T) {
@@ -279,4 +282,34 @@ func TestNotice_DeprecatedPrereleaseStaysOnItsChannel(t *testing.T) {
 
 	newer := Notice("0.1.0-rc.3", Result{Latest: "0.1.0", Deprecated: "superseded"}, npmExe)
 	assert.Contains(t, newer, "npm install -g sepay-cli@latest", "a newer stable release is the upgrade")
+}
+
+func TestNotice_UpgradeCommandFollowsTheInstallChannel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the install.sh rows are Unix paths")
+	}
+	t.Setenv("HOME", "/home/u")
+	cases := []struct {
+		name, exe   string
+		goInstalled bool
+		want        string
+	}{
+		{"npm", "/home/u/.npm-global/lib/node_modules/@sepayjsc/cli-linux-x64/bin/sepay", false, "npm install -g sepay-cli@latest"},
+		{"homebrew cask", "/opt/homebrew/Caskroom/sepay/0.1.0/sepay", false, "brew upgrade sepay"},
+		{"homebrew cellar", "/home/linuxbrew/.linuxbrew/Cellar/sepay/0.1.0/bin/sepay", false, "brew upgrade sepay"},
+		{"scoop", `C:/Users/u/scoop/apps/sepay/current/sepay.exe`, false, "scoop update sepay"},
+		{"go install", "/home/u/go/bin/sepay", true, "go install github.com/sepayvn/sepay-cli/cmd/sepay@latest"},
+		{"install.sh default dir", "/home/u/.local/bin/sepay", false, "curl -fsSL https://get.sepay.vn/sepay-cli-install.sh | sh"},
+		{"install.sh other dir", "/usr/local/bin/sepay", false, "curl -fsSL https://get.sepay.vn/sepay-cli-install.sh | SEPAY_INSTALL_DIR=/usr/local/bin sh"},
+		{"dir that needs quoting", "/home/u/my tools/it's/sepay", false, `SEPAY_INSTALL_DIR='/home/u/my tools/it'\''s' sh`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func(v bool) { build.FromGoInstall = v }(build.FromGoInstall)
+			build.FromGoInstall = tc.goInstalled
+			got := Notice("0.1.0", Result{Latest: "0.2.0"}, tc.exe)
+			assert.Contains(t, got, "To upgrade: ")
+			assert.Contains(t, got, tc.want)
+		})
+	}
 }

@@ -109,10 +109,10 @@ func subAccount(fr listen.Frame) string {
 	return p.SubAccount
 }
 
-// webhookTag prints txn whole (pasteable into `sepay transaction get`) and wh shortened.
+// webhookTag prints both ids whole, so each pastes into `sepay transaction get` / `sepay webhook get`.
 func webhookTag(io *iostreams.IOStreams, fr listen.Frame) string {
 	return listen.Tag(io, "txn", transactionXID(fr)) +
-		listen.Tag(io, "wh", listen.ShortID(webhookXID(fr)))
+		listen.Tag(io, "wh", webhookXID(fr))
 }
 
 // transactionXID reads the envelope: the signed payload holds only an internal numeric id. Empty on older backends.

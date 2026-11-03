@@ -35,7 +35,11 @@ func ReadBody(resp *http.Response) ([]byte, error) {
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("could not read server response: %w", err)
+		host := ""
+		if resp.Request != nil {
+			host = resp.Request.URL.Host
+		}
+		return nil, NewReadError(host, err)
 	}
 	if len(body) > MaxResponseBytes {
 		return nil, fmt.Errorf("server response exceeded %d bytes", MaxResponseBytes)
@@ -198,6 +202,9 @@ func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptio
 
 	// POST is retried only with an idempotency key.
 	canRetry := method != http.MethodPost || opts.IdempotencyKey != ""
+	// When the outcome is unknown, a conditional write without a key is not resent: if the first one
+	// landed, its If-Match no longer matches and the repeat answers 409 for a write that succeeded.
+	canResend := canRetry && (opts.IdempotencyKey != "" || opts.Header.Get("If-Match") == "")
 
 	for attempt := 0; ; attempt++ {
 		var reqBody io.Reader
@@ -225,13 +232,12 @@ func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptio
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			err = NewTransportError(req.URL.Host, c.httpClient.Timeout, err)
 			// A transport error leaves the outcome unknown, so retry only when the server can recognise
 			// the repeat. ctx.Err() keeps Ctrl-C from being retried; the client's own timeout is retried.
-			if canRetry && attempt < c.MaxRetries && ctx.Err() == nil {
+			if canResend && attempt < c.MaxRetries && ctx.Err() == nil {
 				wait := Backoff("", attempt)
-				if c.Logf != nil {
-					c.Logf("Request failed before a response (%v). Waiting %s before retry (attempt %d)...", err, wait, attempt+1)
-				}
+				c.logRetry(err, wait, attempt)
 				select {
 				case <-time.After(wait):
 					continue
@@ -244,11 +250,9 @@ func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptio
 		body, err := ReadBody(resp)
 		if err != nil {
 			// A truncated response is equally unknown; the retry replays the memoized answer.
-			if canRetry && attempt < c.MaxRetries && ctx.Err() == nil {
+			if canResend && attempt < c.MaxRetries && ctx.Err() == nil {
 				wait := Backoff("", attempt)
-				if c.Logf != nil {
-					c.Logf("Could not read the response (%v). Waiting %s before retry (attempt %d)...", err, wait, attempt+1)
-				}
+				c.logRetry(err, wait, attempt)
 				select {
 				case <-time.After(wait):
 					continue
@@ -316,6 +320,19 @@ func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptio
 		}
 		return &env, nil
 	}
+}
+
+// logRetry names a transport failure in plain words; the Go error chain stays out of the terminal.
+func (c *Client) logRetry(err error, wait time.Duration, attempt int) {
+	if c.Logf == nil {
+		return
+	}
+	reason := err.Error()
+	var te *TransportError
+	if errors.As(err, &te) {
+		reason = te.Reason()
+	}
+	c.Logf("cannot reach SePay (%s), retrying in %s (attempt %d of %d)...", reason, wait, attempt+1, c.MaxRetries)
 }
 
 func (c *Client) currentToken() string {

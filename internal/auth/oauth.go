@@ -176,12 +176,12 @@ func (c *Client) postForm(ctx context.Context, path string, form url.Values, out
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return api.NewTransportError(req.URL.Host, c.httpClient.Timeout, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return err
+		return api.NewReadError(req.URL.Host, err)
 	}
 
 	// Redirects are not followed; an empty 3xx body must not read as an empty token.

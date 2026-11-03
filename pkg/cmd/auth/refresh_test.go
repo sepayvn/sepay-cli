@@ -1,8 +1,15 @@
 package auth
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/sepayvn/sepay-cli/internal/config"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 
 	"github.com/stretchr/testify/assert"
@@ -138,4 +145,32 @@ func TestRefresh_UnknownProfileIsUsageError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown profile "nosuch"`)
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+}
+
+// Ctrl-C while another sepay process holds the refresh lock ends the wait at once and spends nothing.
+func TestRefresh_InterruptStopsTheLockWait(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { atomic.AddInt32(&hits, 1) }))
+	t.Cleanup(srv.Close)
+	f, _, _, _ := testFactory(t, srv.URL)
+	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	f.Global.Profile = "work"
+
+	mgr, err := f.Credentials()
+	require.NoError(t, err)
+	held, ok, err := config.TryLockFile(filepath.Join(mgr.Hosts().Dir(), ".refresh.lock"))
+	require.True(t, ok)
+	require.NoError(t, err)
+	defer held.Release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	cmd := NewCmdRefresh(f)
+	cmd.SetArgs(nil)
+	start := time.Now()
+	err = cmd.ExecuteContext(ctx)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, time.Since(start), 2*time.Second, "the wait must not run out the 30s lock timeout")
+	assert.Zero(t, atomic.LoadInt32(&hits), "no refresh token is spent after Ctrl-C")
 }

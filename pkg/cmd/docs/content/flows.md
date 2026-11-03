@@ -94,7 +94,7 @@ webhooks means three POSTs with the same `id`, each signed with that webhook's
 own secret.
 
 Every line is tagged `txn=<transaction xid>` (paste it into `sepay transaction get`) and
-`wh=<xid prefix>` so you can see which transaction it carries and which webhook a delivery
+`wh=<webhook xid>` (paste it into `sepay webhook get`) so you can see which transaction it carries and which webhook a delivery
 came from, and `--webhook <xid>` keeps only one of them. Deduplicate on `id`
 regardless.
 
@@ -182,12 +182,16 @@ you own. Pick one before you build reconciliation; `sepay docs glossary` has wha
 each is. A hosted gateway order does its own matching and needs neither — see
 *Take a payment on a hosted page*.
 
-**By memo code** — one prefix for the whole company, buyers type the code:
+**By memo code** — a prefix per order family, buyers type the code:
 
 ```bash
 sepay paycode get
 sepay paycode set DH --character-type NumberOnly --suffix-from 6 --suffix-to 12
+sepay paycode create HD --character-type NumberAndLetter --suffix-from 6 --suffix-to 12 --active
 ```
+
+`set` edits one structure and keeps the rest; `create` adds one at the end of the
+list and refuses a prefix the company already has, in any letter case.
 
 **By account number** — a distinct VA per order, buyers type nothing:
 

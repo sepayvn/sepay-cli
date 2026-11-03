@@ -27,6 +27,9 @@ func (m *Manager) SetInsecure(v bool) { m.insecure = v }
 // UsedFile reports whether the last mint was stored in the 0600 file.
 func (m *Manager) UsedFile() bool { return m.usedFile }
 
+// StorePath is the 0600 file a credential lands in when the keychain is not used.
+func (m *Manager) StorePath() string { return m.store.Path() }
+
 // Env returns the environment this manager brokers for.
 func (m *Manager) Env() string { return m.env }
 

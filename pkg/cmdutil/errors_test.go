@@ -2,11 +2,13 @@ package cmdutil
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,6 +124,8 @@ func TestHandleError_JSONEnvelopePerFailureClass(t *testing.T) {
 		{"scope", ScopeError{Err: errors.New("the server rejected the scope set")}, "insufficient_scope", ExitScope, "scope"},
 		{"server code wins", &api.HTTPError{StatusCode: 403, Code: "forbidden"}, "forbidden", ExitBlocked, "lacks permission"},
 		{"403 with no code", &api.HTTPError{StatusCode: 403, Message: "Từ chối"}, "blocked", ExitBlocked, "Từ chối"},
+		{"network", api.NewTransportError("cli-api-sandbox.sepay.vn", 30*time.Second, context.DeadlineExceeded), "network_error", ExitError, "did not answer within 30s"},
+		{"cancelled is not a network error", api.NewTransportError("cli-api-sandbox.sepay.vn", 30*time.Second, context.Canceled), "error", ExitError, "was cancelled"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -361,4 +365,16 @@ func TestHandleError_InterruptedJSONEnvelope(t *testing.T) {
 	require.NoError(t, json.Unmarshal(errOut.Bytes(), &got))
 	assert.Equal(t, "interrupted", got.ErrorCode)
 	assert.Equal(t, 130, got.ExitCode)
+}
+
+// The server words these in Vietnamese; the CLI speaks English and says what to do next.
+func TestErrorMessage_PaycodeConflictsAreEnglish(t *testing.T) {
+	for code, want := range map[string]string{
+		"paycode_prefix_exists":    "sepay paycode set --structure <prefix>",
+		"paycode_version_conflict": "nothing was saved, run the command again",
+	} {
+		got := errorMessage(&api.HTTPError{StatusCode: 409, Code: code, Message: "Cấu hình mã thanh toán"})
+		assert.Contains(t, got, want, code)
+		assert.NotContains(t, got, "Cấu hình", code)
+	}
 }

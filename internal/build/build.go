@@ -3,6 +3,7 @@ package build
 
 import (
 	"fmt"
+	"runtime/debug"
 	"strings"
 )
 
@@ -12,6 +13,25 @@ var (
 	Commit  = "none"
 	Date    = "unknown"
 )
+
+// FromGoInstall reports a binary built by "go install …@version" rather than by a release build.
+var FromGoInstall bool
+
+func init() {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		Version, FromGoInstall = fromBuildInfo(Version, info)
+	}
+}
+
+// fromBuildInfo takes the module version only when -ldflags set none and the module came from the
+// module cache, which records a checksum. A build inside a clone records a VCS version (v0.1.0, a
+// pseudo-version, "+dirty") and no checksum: it stays "dev", so it never asks to be upgraded.
+func fromBuildInfo(version string, info *debug.BuildInfo) (string, bool) {
+	if version != "dev" || info.Main.Sum == "" || info.Main.Version == "" {
+		return version, false
+	}
+	return info.Main.Version, true
+}
 
 // String renders the version banner, e.g. "sepay-cli version 0.1.0 (2026-07-09)".
 func String() string {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -28,9 +29,11 @@ const (
 	DisableEnv = "SEPAY_NO_UPDATE_NOTIFIER"
 
 	registryURL = "https://registry.npmjs.org/sepay-cli/"
-	interval    = 24 * time.Hour
-	stateName   = "update-state.json"
-	maxBody     = 1 << 20
+	// installScriptURL must match the get.sepay.vn redirect to scripts/install.sh.
+	installScriptURL = "https://get.sepay.vn/sepay-cli-install.sh"
+	interval         = 24 * time.Hour
+	stateName        = "update-state.json"
+	maxBody          = 1 << 20
 	// A network-read deprecation message is cut to this length.
 	maxMessage = 300
 )
@@ -200,13 +203,12 @@ func (c *Checker) write(st state) error {
 	return os.Rename(tmp, c.StatePath)
 }
 
-// Notice returns the stderr text for r, or "". exe under node_modules means an npm install.
+// Notice returns the stderr text for r, or "". exe, with symlinks resolved, tells the install channel.
 func Notice(current string, r Result, exe string) string {
 	if r.Latest == "" && r.Deprecated == "" {
 		return ""
 	}
 	current = strings.TrimPrefix(current, "v")
-	npm := strings.Contains(filepath.ToSlash(exe), "/node_modules/")
 	var b strings.Builder
 	b.WriteString("\n")
 	if r.Deprecated != "" {
@@ -215,16 +217,50 @@ func Notice(current string, r Result, exe string) string {
 	if r.Latest != "" {
 		fmt.Fprintf(&b, "A new release of sepay-cli is available: %s → %s\n", current, r.Latest)
 	}
-	if npm {
+	if cmd := upgradeCommand(current, r, exe); cmd != "" {
+		b.WriteString("To upgrade: " + cmd + "\n")
+	}
+	fmt.Fprintf(&b, "Turn this notice off with %s=1.\n", DisableEnv)
+	return b.String()
+}
+
+// upgradeCommand names the upgrade for the channel that installed exe; "" for a Windows binary
+// copied by hand, which has no command to offer.
+func upgradeCommand(current string, r Result, exe string) string {
+	path := filepath.ToSlash(exe)
+	switch {
+	case strings.Contains(path, "/node_modules/"):
 		// A prerelease's notice points to its own channel: latest may still be a placeholder.
 		tag := "latest"
 		if r.Latest == "" {
 			tag = distTag(current)
 		}
-		b.WriteString("To upgrade: npm install -g " + Package + "@" + tag + "  (in a project: npm install -D " + Package + "@" + tag + ")\n")
+		return "npm install -g " + Package + "@" + tag + "  (in a project: npm install -D " + Package + "@" + tag + ")"
+	case strings.Contains(path, "/Caskroom/"), strings.Contains(path, "/Cellar/"):
+		return "brew upgrade sepay"
+	case strings.Contains(strings.ToLower(path), "/scoop/apps/"):
+		return "scoop update sepay"
+	case build.FromGoInstall:
+		return "go install github.com/sepayvn/sepay-cli/cmd/sepay@latest"
+	case runtime.GOOS == "windows":
+		return ""
 	}
-	fmt.Fprintf(&b, "Turn this notice off with %s=1.\n", DisableEnv)
-	return b.String()
+	// install.sh, or an archive unpacked by hand: reinstall into the same directory.
+	dir := filepath.Dir(exe)
+	if home, err := os.UserHomeDir(); err == nil && dir == filepath.Join(home, ".local", "bin") {
+		return "curl -fsSL " + installScriptURL + " | sh"
+	}
+	return "curl -fsSL " + installScriptURL + " | SEPAY_INSTALL_DIR=" + shellQuote(dir) + " sh"
+}
+
+// shellQuote leaves a plain path as it is and single-quotes anything else.
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !strings.ContainsRune("/._-+~", r) && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z')
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // distTag mirrors the dist-tag step of .github/workflows/release.yml.

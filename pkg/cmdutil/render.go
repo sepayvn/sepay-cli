@@ -74,6 +74,24 @@ func MaskSecret(s string) string {
 	return "****" + s[len(s)-4:]
 }
 
+// WarnPlaintextStorage tells the user, in plain words and in yellow, that subject landed in the 0600
+// file at path. keychainFailed is set only by the login that just fell back to the file; a file chosen
+// earlier (--insecure-storage, or the profile's stored choice) gets the one-line form.
+func (f *Factory) WarnPlaintextStorage(subject, path string, keychainFailed bool) {
+	path = jsonfmt.Clean(path)
+	lines := []string{"! " + subject + " was saved in a file only your user account can read: " + path}
+	if keychainFailed {
+		lines = []string{
+			"! this computer has no password store sepay can use (OS keychain), so " + subject + " was saved",
+			"  in a file only your user account can read: " + path,
+			"  nothing else to do; on a shared computer, run sepay logout when you are done",
+		}
+	}
+	for _, l := range lines {
+		fmt.Fprintln(f.IOStreams.ErrOut, f.IOStreams.Yellow(l))
+	}
+}
+
 // SuccessIcon returns a check mark, green when color is on.
 func (f *Factory) SuccessIcon() string { return f.IOStreams.Green("✓") }
 

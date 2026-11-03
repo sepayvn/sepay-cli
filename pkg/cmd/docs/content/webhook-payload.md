@@ -224,9 +224,9 @@ sepay webhook listen --forward localhost:3000 --webhook <xid>
 sepay webhook test   --forward localhost:3000 --webhook <xid> --expect-status 200
 ```
 
-`listen` tags every line with `txn=<transaction xid>` and `wh=<webhook xid prefix>`, so one
-transaction reaching three webhooks reads as one `txn` against three `wh`. The `txn` value
-is printed whole and goes straight into `sepay transaction get`. Without `--webhook`,
+`listen` tags every line with `txn=<transaction xid>` and `wh=<webhook xid>`, so one
+transaction reaching three webhooks reads as one `txn` against three `wh`. Both values
+are printed whole: `txn` goes straight into `sepay transaction get`, `wh` into `sepay webhook get`. Without `--webhook`,
 `webhook test` reports which delivery it judged. `sepay webhook list` has the
 xids. Deduplicate on `id` regardless — redelivery is normal on its own.
 

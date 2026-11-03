@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -42,6 +43,10 @@ func run() cmdutil.ExitCode {
 		select {
 		case res := <-newer:
 			exe, _ := os.Executable()
+			// Homebrew and npm start sepay through a symlink; the channel shows in the target.
+			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+				exe = resolved
+			}
 			fmt.Fprint(f.IOStreams.ErrOut, update.Notice(build.Version, res, exe))
 		case <-time.After(time.Second):
 		}

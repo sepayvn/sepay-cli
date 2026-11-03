@@ -1,12 +1,16 @@
 package auth
 
 import (
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zalando/go-keyring"
 
+	"github.com/sepayvn/sepay-cli/internal/config"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 )
 
@@ -217,10 +221,34 @@ func TestLogin_InsecureStorageWarns(t *testing.T) {
 
 	require.NoError(t, run(NewCmdLogin(f), "--insecure-storage"))
 	assert.Contains(t, out.String(), "✓ Logged in")
-	assert.Contains(t, errOut.String(), "plaintext file")
+	assert.Contains(t, errOut.String(), "! your login was saved in a file only your user account can read: ")
+	assert.NotContains(t, errOut.String(), "password store", "a file the user asked for is not blamed on the keychain")
 
 	mgr, _ := f.Credentials()
 	assert.True(t, mgr.Hosts().Profiles["default"].Insecure)
+}
+
+// No keychain means the same outcome as --insecure-storage, with a yellow reason the user can act on.
+func TestLogin_NoKeychainFallsBackToFile(t *testing.T) {
+	srv := newFakeOAuth(t)
+	f, _, out, errOut := testFactory(t, srv.URL)
+	f.IOStreams.SetColorEnabled(true)
+	keyring.MockInitWithError(errors.New("no secret service"))
+	t.Cleanup(keyring.MockInit)
+
+	require.NoError(t, run(NewCmdLogin(f)))
+	assert.Contains(t, out.String(), "Logged in as default")
+
+	mgr, _ := f.Credentials()
+	hostsPath := filepath.Join(mgr.Hosts().Dir(), config.HostsFile)
+	assert.Contains(t, errOut.String(), "\x1b[33m! this computer has no password store sepay can use (OS keychain), so your login was saved\x1b[0m\n"+
+		"\x1b[33m  in a file only your user account can read: "+hostsPath+"\x1b[0m\n"+
+		"\x1b[33m  nothing else to do; on a shared computer, run sepay logout when you are done\x1b[0m\n")
+	assert.NotContains(t, errOut.String(), "--insecure-storage", "the user is never told to re-run with a flag")
+
+	p := mgr.Hosts().Profiles["default"]
+	assert.True(t, p.Insecure)
+	assert.NotEmpty(t, p.RefreshToken)
 }
 
 func TestLogin_JSONOutput(t *testing.T) {

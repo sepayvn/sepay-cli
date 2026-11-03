@@ -44,7 +44,8 @@ runs — so nothing has to be read out of prose:
 
 `error_code` is the server's code when the request reached the API, otherwise a
 name for the local failure (`usage_error`, `not_implemented`, `unauthenticated`,
-`insufficient_scope`, `interrupted`, `error`). A 403 carrying no code of its own falls back to
+`insufficient_scope`, `interrupted`, `network_error`, `error`). `network_error` means no usable answer
+came back (no connection, DNS, refused or cut-off connection, timeout, untrusted certificate); exit 1, worth retrying. A 403 carrying no code of its own falls back to
 `blocked`, and a 5xx carrying none to `server_error`. A `validation_error` also
 carries an `errors` object of field to message, and `request_id` is present
 whenever the API host sent one: quote it to SePay support for a 5xx.

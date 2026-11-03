@@ -26,7 +26,8 @@ func NewCmdAuth(f *cmdutil.Factory) *cobra.Command {
 
 Login uses the OAuth 2.1 device flow: sepay prints a code, you approve it in the
 browser, and the token is stored in your OS keychain. Without a usable keychain
-(a server, a container), sign in with --insecure-storage to keep it in a 0600 file.
+(a server, a container), login keeps it in a 0600 file instead and says so;
+--insecure-storage chooses the file up front.
 Tokens are never printed except by "sepay auth token".`,
 	}
 	cmd.AddCommand(NewCmdLogin(f))
@@ -52,15 +53,6 @@ func parseScopes(csv string) []string {
 		out = append(out, s)
 	}
 	return out
-}
-
-// warnInsecureStorage reminds that the token went to the 0600 file. That happens only when file
-// storage was chosen (--insecure-storage, or the profile's stored choice): a keychain failure is an error.
-func warnInsecureStorage(f *cmdutil.Factory, usedFile bool) {
-	if !usedFile {
-		return
-	}
-	f.ErrPrintf("! stored the token in a plaintext file (chmod 0600), as chosen with --insecure-storage\n")
 }
 
 func sortedProfileNames(hosts *config.Hosts) []string {

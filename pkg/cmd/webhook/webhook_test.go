@@ -97,8 +97,7 @@ func TestLogs_Table(t *testing.T) {
 	s := out.String()
 	assert.Contains(t, s, "TRANSACTION")
 	assert.Contains(t, s, "aaaaaaaa-0000-4000-8000-000000000001")
-	assert.Contains(t, s, "cccccccc")
-	assert.NotContains(t, s, "cccccccc-0000")
+	assert.Contains(t, s, "cccccccc-0000-4000-8000-000000000001", "the webhook xid is whole, so it pastes into webhook get")
 	assert.Contains(t, s, "failed")
 	assert.Contains(t, s, "500")
 }

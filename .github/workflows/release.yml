@@ -82,6 +82,18 @@ jobs:
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         with:
           cosign-release: v2.5.2 # .sig + .pem output; npm/build-packages.js verifies that pair
+      # A token for the Homebrew tap and Scoop bucket only; GITHUB_TOKEN cannot write to them.
+      # Minted only when publishing there is switched on and the tag is a final release, so a
+      # prerelease run never holds write access to either repository.
+      - id: tap-token
+        if: ${{ vars.PUBLISH_TAPS == 'true' && !contains(steps.tag.outputs.tag, '-') }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-sepay-cli,scoop-sepay-cli
+          permission-contents: write
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           version: "v2.19.0"
@@ -89,6 +101,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.tag }}
+          TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
+          # Always "true" or "false", so the skip_upload templates in .goreleaser.yaml never meet an unset variable.
+          PUBLISH_TAPS: ${{ vars.PUBLISH_TAPS == 'true' && 'true' || 'false' }}
 
       # Hand dist/ to the npm job. NOT `gh release download`: what Releases serves has
       # no artifacts.json / metadata.json, so the npm job would have to parse filenames

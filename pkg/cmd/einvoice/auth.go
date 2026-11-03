@@ -2,7 +2,6 @@ package einvoice
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/sepayvn/sepay-cli/internal/product"
@@ -58,7 +57,7 @@ func runAuth(ctx context.Context, f *cmdutil.Factory, refresh, insecure bool) er
 		return err
 	}
 	if mgr.UsedFile() {
-		fmt.Fprintln(f.IOStreams.ErrOut, "! stored the E-Invoice credential in a plaintext file (chmod 0600), as chosen with --insecure-storage")
+		f.WarnPlaintextStorage("the E-Invoice credential", mgr.StorePath(), false)
 	}
 
 	view := authView{Product: product.EInvoice, Env: mgr.Env(), AuthType: cred.AuthType}

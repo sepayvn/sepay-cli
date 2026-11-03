@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,11 +17,11 @@ import (
 // file storage. Tokens never fall back to the plaintext file on their own.
 var ErrKeychainUnavailable = errors.New("could not store the token in the OS keychain")
 
-// keychainHint tells the user how to choose file storage explicitly.
-const keychainHint = "to keep tokens in a 0600 file instead, run: sepay login --insecure-storage"
+// keychainHint tells the user how to move the token to the 0600 file: a login falls back to it on its own.
+const keychainHint = "to keep tokens in a 0600 file instead, run: sepay login"
 
 // Manager stores credentials in the OS keychain, or inline in the 0600 hosts file when the
-// profile chose --insecure-storage.
+// profile keeps them there: chosen with --insecure-storage, or a login that found no usable keychain.
 type Manager struct {
 	hosts   *config.Hosts
 	keyring credStore
@@ -128,6 +130,33 @@ func (m *Manager) heldBy(h *config.Hosts, profile string) (*Credential, error) {
 		return credentialFromProfile(p), nil
 	}
 	return m.keyring.get(keyFor(profile, p.Host))
+}
+
+const refreshLockFile = ".refresh.lock"
+
+// LockRefresh serializes spending a refresh token across processes. The server rotates the token on
+// use, so two processes spending the same one leave the loser with invalid_grant and the profile
+// revoked. It waits until ctx is done; ok is false when no lock was taken (another holder for the
+// whole wait, Ctrl-C, or no config dir).
+func (m *Manager) LockRefresh(ctx context.Context) (release func(), ok bool) {
+	if m.hosts.Dir() == "" {
+		return func() {}, false
+	}
+	lock, ok, err := config.TryLockFileContext(ctx, filepath.Join(m.hosts.Dir(), refreshLockFile))
+	if err != nil || !ok {
+		return func() {}, false
+	}
+	return lock.Release, true
+}
+
+// Current re-reads the stored credential of profile, including writes by other processes. It leaves the
+// document the Manager holds alone: callers keep reading the profile they resolved, even after a logout elsewhere.
+func (m *Manager) Current(profile string) (*Credential, error) {
+	fresh, err := config.LoadHostsFrom(m.hosts.Dir())
+	if err != nil {
+		return nil, err
+	}
+	return m.heldBy(fresh, profile)
 }
 
 // SetActive switches the active profile; ErrNotFound if it does not exist on disk.

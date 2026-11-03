@@ -100,7 +100,7 @@ func TestManager_KeychainUnavailableRefusesInsteadOfWritingTheFile(t *testing.T)
 
 	usedFile, err := m.Set("work", "my.sepay.vn", &Credential{AccessToken: "acc", RefreshToken: "ref"}, nil, false, "")
 	require.ErrorIs(t, err, ErrKeychainUnavailable)
-	assert.Contains(t, err.Error(), "--insecure-storage", "the error names the explicit way out")
+	assert.Contains(t, err.Error(), "run: sepay login", "the error names the way out: a login falls back to the file")
 	assert.False(t, usedFile)
 	assert.Nil(t, m.Hosts().Profiles["work"], "a refused write leaves no profile behind")
 	_, statErr := os.Stat(filepath.Join(os.Getenv("SEPAY_CONFIG_DIR"), "hosts.yml"))

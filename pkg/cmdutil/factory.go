@@ -63,6 +63,10 @@ type Factory struct {
 	// keychainWarned keeps the "renewed token not saved" notice to one line per run.
 	keychainWarned bool
 
+	// runCtx is the running command's context. NewAPIClient takes none, yet a renewal waiting on the
+	// refresh lock must still stop on Ctrl-C.
+	runCtx context.Context
+
 	// Config, Credentials and NewAPIClient are lazy.
 	Config       func() (*config.Config, error)
 	Credentials  func() (*auth.Manager, error)
@@ -631,20 +635,40 @@ func (f *Factory) TokenForProfile(explicit string) (host, accessToken string, er
 
 const refreshTimeout = 30 * time.Second
 
+// SetContext gives the factory the running command's context, for work started outside a command's own calls.
+func (f *Factory) SetContext(ctx context.Context) { f.runCtx = ctx }
+
 // refreshIfExpired returns "" on any failure, so the caller sends the stored token and gets a 401.
 func (f *Factory) refreshIfExpired(mgr *auth.Manager, profile string, cred *auth.Credential) (string, error) {
 	if !cred.Expired() || cred.RefreshToken == "" {
 		return "", nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+	base := f.runCtx
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(base, refreshTimeout)
 	defer cancel()
 	return f.refresh(ctx, mgr, profile, cred)
 }
 
 func (f *Factory) refresh(ctx context.Context, mgr *auth.Manager, profile string, cred *auth.Credential) (string, error) {
+	// Under the refresh lock a racing process sees the pair this one stored and spends nothing.
+	// SetIfCurrent still settles a concurrent re-login, which does not take the lock.
+	if release, ok := mgr.LockRefresh(ctx); ok {
+		defer release()
+		if current, err := mgr.Current(profile); err == nil && current.RefreshToken != cred.RefreshToken {
+			if current.Revoked() {
+				return "", nil
+			}
+			if !current.Expired() {
+				return current.AccessToken, nil
+			}
+			cred = current
+		}
+	}
 	p := mgr.Hosts().Profiles[profile]
 
-	// The exchange runs outside the config lock; SetIfCurrent settles a concurrent re-login or rotation at write time.
 	tok, err := f.NewOAuthClient(p.Host).Refresh(ctx, cred.RefreshToken, p.Scopes)
 	if err != nil {
 		if grantIsGone(err) {

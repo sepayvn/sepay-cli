@@ -30,6 +30,8 @@ var apiErrorMessage = map[string]string{
 	"access_revoked":           "your access to this stream was revoked, run: sepay login",
 	"sse_hub_disabled":         "the listen feature is switched off on SePay's side; it works again once SePay turns it back on",
 	"replay_not_dispatched":    "the replay was not sent",
+	"paycode_prefix_exists":    "this company already has a pay-code structure with that prefix (letter case aside); change it with: sepay paycode set --structure <prefix>",
+	"paycode_version_conflict": "the pay-code configuration changed since it was read; nothing was saved, run the command again (with a new --idempotency-key if you passed one)",
 
 	// Product broker: all answer 500 with one generic message, so only error_code tells the steps apart.
 	"pg_provision_failed":       "sandbox Payment Gateway provisioning failed server-side; retry, then report it to SePay",
@@ -339,6 +341,10 @@ func renderErrorOutput(render func(io.Writer, any) error, w io.Writer, code Exit
 		ErrorCode: errorCodes[code],
 		Message:   errorMessage(err),
 		ExitCode:  code,
+	}
+	var transportErr *api.TransportError
+	if errors.As(err, &transportErr) && !transportErr.Cancelled() {
+		out.ErrorCode = "network_error"
 	}
 	var apiErr *api.HTTPError
 	if errors.As(err, &apiErr) {

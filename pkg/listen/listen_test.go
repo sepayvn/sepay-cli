@@ -337,13 +337,6 @@ func TestPayloadString(t *testing.T) {
 	}
 }
 
-func TestShortID(t *testing.T) {
-	assert.Equal(t, "7c1e2b3a", ShortID("7c1e2b3a-4d5f-6a7b-8c9d-0e1f2a3b4c5d"))
-	assert.Equal(t, "92704", ShortID("92704"), "an integer id is unchanged")
-	assert.Equal(t, "-lead", ShortID("-lead"), "a leading dash is not a segment boundary")
-	assert.Empty(t, ShortID(""))
-}
-
 func TestTag_SanitizesAndSkipsEmpty(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
 

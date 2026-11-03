@@ -708,14 +708,6 @@ func PayloadString(fr Frame, path ...string) string {
 	return ""
 }
 
-// ShortID trims an id to its first dash-separated segment.
-func ShortID(id string) string {
-	if i := strings.Index(id, "-"); i > 0 {
-		return id[:i]
-	}
-	return id
-}
-
 // DeliveryHeaders returns a frame's headers minus hop-by-hop ones, defaulting Content-Type to JSON.
 func DeliveryHeaders(frame Frame) http.Header {
 	headers := http.Header{}

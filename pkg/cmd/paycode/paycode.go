@@ -1,4 +1,4 @@
-// Package paycode implements "sepay paycode" (get, set).
+// Package paycode implements "sepay paycode" (get, set, create).
 package paycode
 
 import (
@@ -25,12 +25,20 @@ const (
 	suffixMax = 30
 )
 
-// Paycode is the config shape shared by GET and POST /v2/company/paycode.
+// Paycode is the config shape shared by GET and PUT /v2/company/paycode.
 type Paycode struct {
 	PayCode    string      `json:"PayCode" yaml:"PayCode"`
 	Structures []Structure `json:"PayCodeStructures" yaml:"PayCodeStructures"`
 	// Optimistic-lock token; set sends it back so a stale write gets 409.
 	Version string `json:"version,omitempty" yaml:"version,omitempty"`
+	// Set by PUT only: Haravan/Shopify/Sapo connections still carrying a prefix the list no longer has.
+	EcomRowsNotSynced int `json:"ecom_rows_not_synced,omitempty" yaml:"ecom_rows_not_synced,omitempty"`
+}
+
+// created is the POST /v2/company/paycode answer: the new structure and the list it ends.
+type created struct {
+	Structure Structure `json:"structure" yaml:"structure"`
+	Paycode   `yaml:",inline"`
 }
 
 // Structure is one pay-code prefix rule.
@@ -47,9 +55,9 @@ func NewCmdPaycode(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "paycode <command>",
 		Aliases: []string{"pc"},
-		Short:   "View or set your payment code prefix",
+		Short:   "View, set or add payment code prefixes",
 	}
-	cmd.AddCommand(newGetCmd(f), newSetCmd(f))
+	cmd.AddCommand(newGetCmd(f), newSetCmd(f), newCreateCmd(f))
 	return cmd
 }
 
@@ -98,21 +106,22 @@ mistyped switch.`,
 			if enable && disable {
 				return &cmdutil.FlagError{Err: errors.New("cannot use --enable and --disable together")}
 			}
-			if characterType != "" && characterType != "NumberOnly" && characterType != "NumberAndLetter" {
-				return &cmdutil.FlagError{Err: errors.New("--character-type must be NumberOnly or NumberAndLetter")}
+			if characterType != "" {
+				if err := checkCharacterType(characterType); err != nil {
+					return err
+				}
 			}
 			if err := validateSuffixRange(cmd, suffixFrom, suffixTo); err != nil {
 				return err
 			}
-			given := cmdutil.FirstArg(args)
-			if cmd.Flags().Changed("prefix") {
-				if given != "" {
-					return &cmdutil.FlagError{Err: errors.New("give the pay-code prefix once: as the argument or as --prefix, not both")}
-				}
-				given = prefixFlag
+			given, err := givenPrefix(cmd, args, prefixFlag)
+			if err != nil {
+				return err
 			}
-			if given != "" && !prefixPattern.MatchString(given) {
-				return &cmdutil.FlagError{Err: fmt.Errorf("prefix must be 2-5 letters, got %q", given)}
+			if given != "" {
+				if err := checkPrefix(given); err != nil {
+					return err
+				}
 			}
 			// Flags alone keep the stored prefix; only a bare `set` prompts, after the GET so it can default to the picked structure.
 			promptPrefix := given == "" && !enable && !disable && !anyFlagChanged(cmd, "suffix-from", "suffix-to", "character-type", "active")
@@ -154,6 +163,32 @@ mistyped switch.`,
 		cmdutil.AnnScope:     "paycode:write",
 		cmdutil.AnnGuidance:  "On production this changes reconciliation matching immediately; transfers in flight with the old prefix stop matching.",
 	})
+}
+
+// givenPrefix is the prefix from the argument or --prefix, refusing both; "" when neither was given.
+func givenPrefix(cmd *cobra.Command, args []string, prefixFlag string) (string, error) {
+	prefix := cmdutil.FirstArg(args)
+	if !cmd.Flags().Changed("prefix") {
+		return prefix, nil
+	}
+	if prefix != "" {
+		return "", &cmdutil.FlagError{Err: errors.New("give the pay-code prefix once: as the argument or as --prefix, not both")}
+	}
+	return prefixFlag, nil
+}
+
+func checkPrefix(prefix string) error {
+	if !prefixPattern.MatchString(prefix) {
+		return &cmdutil.FlagError{Err: fmt.Errorf("prefix must be 2-5 letters, got %q", prefix)}
+	}
+	return nil
+}
+
+func checkCharacterType(characterType string) error {
+	if characterType != "NumberOnly" && characterType != "NumberAndLetter" {
+		return &cmdutil.FlagError{Err: errors.New("--character-type must be NumberOnly or NumberAndLetter")}
+	}
+	return nil
 }
 
 func anyFlagChanged(cmd *cobra.Command, names ...string) bool {
@@ -259,12 +294,12 @@ func runSet(ctx context.Context, f *cmdutil.Factory, opts setOptions) error {
 		if opts.prefix, err = f.InputWithDefault("Pay-code prefix (2-5 letters)", def); err != nil {
 			return err
 		}
-		if !prefixPattern.MatchString(opts.prefix) {
-			return &cmdutil.FlagError{Err: fmt.Errorf("prefix must be 2-5 letters, got %q", opts.prefix)}
+		if err := checkPrefix(opts.prefix); err != nil {
+			return err
 		}
 	}
 
-	// Merge onto the GET result so the POST carries its version and a concurrent replace gets 409.
+	// Merge onto the GET result so the PUT carries its version and a concurrent replace gets 409.
 	body := mergePaycode(cur, opts, target)
 
 	// The server requires explicit on/off per structure; fail locally instead of a 422.
@@ -282,7 +317,8 @@ func runSet(ctx context.Context, f *cmdutil.Factory, opts setOptions) error {
 	version := body.Version
 	body.Version = ""
 
-	// No idempotency key: a config replace is idempotent.
+	// No idempotency key: If-Match refuses a stale write, and the client does not resend a conditional
+	// write whose outcome it never learned (a landed one would come back as 409).
 	if err := f.ConfirmProdWrite("set pay-code"); err != nil {
 		return err
 	}
@@ -291,7 +327,7 @@ func runSet(ctx context.Context, f *cmdutil.Factory, opts setOptions) error {
 		write.Header = http.Header{"If-Match": []string{version}}
 	}
 
-	env, err = client.Post(ctx, "/company/paycode", write)
+	env, err = client.Put(ctx, "/company/paycode", write)
 	if err != nil {
 		return err
 	}
@@ -299,10 +335,108 @@ func runSet(ctx context.Context, f *cmdutil.Factory, opts setOptions) error {
 	if err != nil {
 		return err
 	}
+	if res.EcomRowsNotSynced > 0 {
+		f.ErrPrintf("Warning: %d Haravan/Shopify/Sapo connection(s) still use a pay-code prefix this list no longer has; update them in my.sepay.vn.\n", res.EcomRowsNotSynced)
+	}
 
 	return f.RenderOutput(res, func() error {
 		fmt.Fprintln(f.IOStreams.ErrOut, "Pay-code updated.")
 		return renderPaycode(f, res)
+	})
+}
+
+func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
+	var (
+		prefixFlag, characterType string
+		suffixFrom, suffixTo      int
+		active                    bool
+	)
+	cmd := &cobra.Command{
+		Use:   "create [prefix]",
+		Short: "Add a pay-code structure",
+		Long: `Add one pay-code structure at the end of the list. The other structures and the
+pay-code on/off switch stay as they are; to change those, use sepay paycode set.
+
+Every field is required: the prefix (argument or --prefix), --suffix-from,
+--suffix-to, --character-type, and --active or --active=false. On a terminal a
+missing prefix is asked for. A prefix the company already has, in any letter case,
+is refused.`,
+		Args: cmdutil.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, name := range []string{"suffix-from", "suffix-to", "character-type", "active"} {
+				if !cmd.Flags().Changed(name) {
+					return &cmdutil.FlagError{Err: fmt.Errorf("--%s is required", name)}
+				}
+			}
+			if err := checkCharacterType(characterType); err != nil {
+				return err
+			}
+			if err := validateSuffixRange(cmd, suffixFrom, suffixTo); err != nil {
+				return err
+			}
+			prefix, err := givenPrefix(cmd, args, prefixFlag)
+			if err != nil {
+				return err
+			}
+			if prefix == "" {
+				if !f.CanPrompt() {
+					return &cmdutil.FlagError{Err: errors.New("a pay-code prefix is required")}
+				}
+				if prefix, err = f.Input("Pay-code prefix (2-5 letters)"); err != nil {
+					return err
+				}
+			}
+			if err := checkPrefix(prefix); err != nil {
+				return err
+			}
+			return runCreate(cmd.Context(), f, Structure{
+				IsActive:      *onOff(active),
+				Prefix:        prefix,
+				SuffixFrom:    suffixFrom,
+				SuffixTo:      suffixTo,
+				CharacterType: characterType,
+			})
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&prefixFlag, "prefix", "", "Pay-code prefix (2-5 letters), same as the argument; use it when the prefix reads as switch syntax (on|off|yes|no|true|false)")
+	fl.IntVar(&suffixFrom, "suffix-from", 0, fmt.Sprintf("Suffix range start (%d-%d)", suffixMin, suffixMax))
+	fl.IntVar(&suffixTo, "suffix-to", 0, fmt.Sprintf("Suffix range end (%d-%d)", suffixMin, suffixMax))
+	fl.StringVar(&characterType, "character-type", "", "NumberOnly|NumberAndLetter")
+	fl.BoolVar(&active, "active", false, "Turn the structure on (--active) or off (--active=false)")
+	cmdutil.MarkRequired(cmd, "suffix-from", "suffix-to", "character-type", "active")
+	return cmdutil.Annotate(cmd, map[string]string{
+		cmdutil.AnnValueFlag: "prefix",
+		cmdutil.AnnScope:     "paycode:write",
+		cmdutil.AnnGuidance:  "On production an active structure starts matching transfers immediately.",
+	})
+}
+
+func runCreate(ctx context.Context, f *cmdutil.Factory, st Structure) error {
+	client, err := f.NewAPIClient()
+	if err != nil {
+		return err
+	}
+	// One key per create: a retried request must not append the structure twice.
+	key, err := f.IdempotencyKey()
+	if err != nil {
+		return err
+	}
+	if err := f.ConfirmProdWrite("create pay-code structure " + st.Prefix); err != nil {
+		return err
+	}
+	env, err := client.Post(ctx, "/company/paycode", api.WriteOptions{Body: st, IdempotencyKey: key})
+	if err != nil {
+		return err
+	}
+	res, err := api.DataInto[created](env)
+	if err != nil {
+		return err
+	}
+
+	return f.RenderOutput(res, func() error {
+		f.ErrPrintf("%s Created pay-code structure %s.\n", f.SuccessIcon(), res.Structure.Prefix)
+		return renderPaycode(f, res.Paycode)
 	})
 }
 

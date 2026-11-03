@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/sepayvn/sepay-cli/internal/auth"
+	"github.com/sepayvn/sepay-cli/internal/config"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 
 	"github.com/spf13/cobra"
@@ -42,6 +45,8 @@ dropped scope, log in again with sepay login --scopes read,webhook:write,...`,
 	fl.BoolVar(&opts.resetScopes, "reset-scopes", false, "Ignore current scopes; use only --scopes")
 	return cmd
 }
+
+const refreshLockWait = 30 * time.Second
 
 func runRefresh(ctx context.Context, f *cmdutil.Factory, opts *refreshOptions) error {
 	// No API client is built here, so nothing else tells a typo from a missing login.
@@ -86,6 +91,21 @@ func runRefresh(ctx context.Context, f *cmdutil.Factory, opts *refreshOptions) e
 		return &cmdutil.FlagError{Err: errors.New("that would clear every scope, which a refresh cannot do; run: sepay logout, then sepay login --scopes <scopes>")}
 	}
 
+	// Another process may have rotated the token while this one waited for the lock.
+	lockCtx, cancel := context.WithTimeout(ctx, refreshLockWait)
+	release, _ := mgr.LockRefresh(lockCtx)
+	cancel()
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if current, err := mgr.Current(name); err == nil {
+		if current.RefreshToken == "" {
+			return cmdutil.AuthError{Err: fmt.Errorf("no refresh token for profile %s, run: sepay login", name)}
+		}
+		cred = current
+	}
+
 	tok, err := f.NewOAuthClient(p.Host).Refresh(ctx, cred.RefreshToken, target)
 	if err != nil {
 		var ae *auth.Error
@@ -114,7 +134,9 @@ func runRefresh(ctx context.Context, f *cmdutil.Factory, opts *refreshOptions) e
 		}
 		return fmt.Errorf("could not store credentials: %w", err)
 	}
-	warnInsecureStorage(f, usedFile)
+	if usedFile {
+		f.WarnPlaintextStorage("your login", filepath.Join(mgr.Hosts().Dir(), config.HostsFile), false)
+	}
 
 	f.Printf("%s Refreshed token for %s (%s)\n",
 		f.SuccessIcon(), cmdutil.DisplayHost(p.Host), strings.Join(granted, ", "))

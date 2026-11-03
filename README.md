@@ -1,144 +1,147 @@
 # sepay
 
-The command-line tool for **SePay**. Log in, watch transactions, create webhooks and stream
-them to `localhost`, create hosted-checkout orders, and simulate all of it in sandbox.
+Công cụ dòng lệnh của **SePay**. Đăng nhập, xem giao dịch, tạo webhook và nhận webhook ngay trên
+`localhost`, tạo đơn hàng thanh toán hosted checkout, và giả lập toàn bộ các bước đó trên sandbox.
 
 ```
 sepay <command> <subcommand> [flags]
 ```
 
-## Install
+## Cài đặt
 
 ```bash
-npm install --save-dev sepay-cli@<version>   # pin the version
+npm install --save-dev sepay-cli@<version>   # ghim phiên bản
 npx sepay-cli version
-npx sepay-cli@next version                    # latest release candidate
+npx sepay-cli@next version                    # bản release candidate mới nhất
 ```
 
-Per-platform archives and the cosign-signed `checksums.txt` are attached to each
+Gói cài đặt cho từng nền tảng và file `checksums.txt` có chữ ký cosign được đính kèm ở mỗi
 [GitHub Release](https://github.com/sepayvn/sepay-cli/releases).
 
-### Updating
+### Cập nhật
 
 ```bash
-npm install -g sepay-cli@latest      # global install
-npm install -D sepay-cli@latest      # pinned in a project (or let Dependabot / Renovate open the PR)
+npm install -g sepay-cli@latest      # cài toàn cục
+npm install -D sepay-cli@latest      # ghim trong project (hoặc để Dependabot / Renovate mở PR)
 ```
 
-Once a day an interactive run checks for a newer release, and whether the version you run has
-been deprecated (withdrawn or vulnerable), and prints a short notice to stderr after the command.
-It never installs anything and stays quiet in CI, under `--json`, and when
-`SEPAY_NO_UPDATE_NOTIFIER=1`.
+Mỗi ngày một lần, khi bạn chạy lệnh trên terminal, CLI kiểm tra xem đã có bản mới chưa và bản
+đang dùng có bị ngừng hỗ trợ (bị thu hồi hoặc có lỗ hổng) không, rồi in một dòng thông báo ngắn ra
+stderr sau khi lệnh chạy xong. CLI không bao giờ tự cài gì, và không thông báo khi chạy trong CI,
+khi dùng `--json`, hoặc khi đặt `SEPAY_NO_UPDATE_NOTIFIER=1`.
 
-## Get started
+## Bắt đầu
 
 ```bash
-sepay login          # opens a browser to approve a one-time code
-sepay auth status    # the account and company you are on
+sepay login          # mở trình duyệt để xác nhận một mã dùng một lần
+sepay auth status    # tài khoản và công ty bạn đang dùng
 ```
 
-The token is stored in your OS keychain. On a machine with no browser: `sepay login --with-token`. With no usable keychain (a server, a container): add `--insecure-storage` to keep it in a `0600` file.
+Token được lưu trong keychain của hệ điều hành. Trên máy không có keychain dùng được (server, máy
+truy cập qua SSH), CLI tự lưu token vào một file chỉ tài khoản của bạn đọc được và in cảnh báo màu
+vàng; bạn không cần làm gì thêm. Muốn lưu vào file ngay từ đầu: `sepay login --insecure-storage`.
+Máy không có trình duyệt: `sepay login --with-token`.
 
-Every command runs against **sandbox** by default. Add `--env production` to touch live data.
+Mọi lệnh mặc định chạy trên **sandbox**. Thêm `--env production` để làm việc với dữ liệu thật.
 
-## Receive your first webhook on localhost
+## Nhận webhook đầu tiên trên localhost
 
-No public URL, no tunnel.
+Không cần URL công khai, không cần tunnel.
 
 ```bash
-# Your handler is running on localhost:3000
+# Handler của bạn đang chạy ở localhost:3000
 
-sepay sandbox init --with-va --with-webhook-listen        # sandbox account + webhook
-sepay webhook listen --forward localhost:3000 --print     # stream events to the handler
+sepay sandbox init --with-va --with-webhook-listen        # tạo tài khoản sandbox + webhook
+sepay webhook listen --forward localhost:3000 --print     # chuyển sự kiện về handler
 
-# Second shell: fire a transaction
-sepay bank-account list                                   # note the xid
+# Mở terminal thứ hai: tạo một giao dịch
+sepay bank-account list                                   # ghi lại xid
 sepay sandbox simulate payment_in --bank-account <ba_xid> --amount 50000 --code ABC123
 ```
 
-Each event carries the same body and signature headers SePay sends, so your handler runs its real
-path, including its own signature check. Assert the handler responds correctly: `sepay webhook test --forward localhost:3000 --amount 50000`.
+Mỗi sự kiện mang đúng body và các header chữ ký mà SePay gửi, nên handler chạy đúng luồng thật,
+kể cả bước tự kiểm tra chữ ký. Kiểm tra handler phản hồi đúng: `sepay webhook test --forward localhost:3000 --amount 50000`.
 
-## Commands
+## Các lệnh
 
-| Command | What it does |
+| Lệnh | Chức năng |
 |---|---|
-| `transaction` | List and inspect transactions |
-| `bank-account` | Manage bank accounts |
-| `webhook` | Create, update, view logs, `listen`, `test`, `replay` |
-| `va` | Manage virtual accounts |
-| `paycode` | Payment code prefix |
-| `pg` | Payment Gateway orders and merchant |
-| `bankhub` | Bank Hub companies, accounts, and link tokens |
-| `einvoice` | Electronic invoices |
-| `apikey` | API keys |
-| `quota` | Plan quota and usage |
-| `sandbox` | `init`, `seed`, `simulate`, `reset` (sandbox only) |
-| `api` | Call any SePay API endpoint with the stored token |
+| `transaction` | Xem danh sách và chi tiết giao dịch |
+| `bank-account` | Quản lý tài khoản ngân hàng |
+| `webhook` | Tạo, sửa, xem log, `listen`, `test`, `replay` |
+| `va` | Quản lý tài khoản ảo (VA) |
+| `paycode` | Tiền tố mã thanh toán |
+| `pg` | Đơn hàng và merchant của Cổng thanh toán (Payment Gateway) |
+| `bankhub` | Công ty, tài khoản và link token của Bank Hub |
+| `einvoice` | Hóa đơn điện tử |
+| `apikey` | API key |
+| `quota` | Hạn mức gói và mức sử dụng |
+| `sandbox` | `init`, `seed`, `simulate`, `reset` (chỉ trên sandbox) |
+| `api` | Gọi bất kỳ endpoint nào của SePay API bằng token đã lưu |
 | `auth` | `status`, `switch`, `refresh`, `sessions`, `revoke`, `token` |
-| `config` | CLI settings |
-| `docs` | Reference topics in the terminal |
+| `config` | Cấu hình CLI |
+| `docs` | Tài liệu tra cứu ngay trong terminal |
 
-`sepay --help` lists everything. `sepay --map=paths` prints every command; `--map=json` adds
-machine-readable metadata.
+`sepay --help` liệt kê toàn bộ. `sepay --map=paths` in mọi lệnh; `--map=json` kèm thêm metadata
+cho máy đọc.
 
-## Global flags
+## Flag dùng chung
 
-| Flag | Meaning |
+| Flag | Ý nghĩa |
 |---|---|
-| `--env sandbox\|production` | Environment, default `sandbox` |
-| `--json`, `-o json\|yaml` | Machine-readable output, no color; every read command supports it |
-| `-p, --profile` | Account to use, when more than one is logged in |
-| `-y, --yes` | Skip the confirmation on write commands (scripts, CI); cannot bypass OTP |
-| `--no-input` | Never prompt; a missing value is an error |
-| `--idempotency-key` | Retry an interrupted write without repeating it |
-| `-v, --verbose` | Debug logging; tokens and OTP are always redacted |
+| `--env sandbox\|production` | Môi trường, mặc định `sandbox` |
+| `--json`, `-o json\|yaml` | Output cho máy đọc, không màu; mọi lệnh đọc dữ liệu đều hỗ trợ |
+| `-p, --profile` | Tài khoản cần dùng, khi đang đăng nhập nhiều tài khoản |
+| `-y, --yes` | Bỏ bước xác nhận ở lệnh ghi (script, CI); không bỏ qua được OTP |
+| `--no-input` | Không bao giờ hỏi; thiếu giá trị thì báo lỗi |
+| `--idempotency-key` | Chạy lại một lệnh ghi bị gián đoạn mà không thực hiện hai lần |
+| `-v, --verbose` | Log gỡ lỗi; token và OTP luôn được che |
 
-Environment variables: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOTIFIER`, `NO_COLOR`. Details: `sepay docs environment`.
+Biến môi trường: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOTIFIER`, `NO_COLOR`. Chi tiết: `sepay docs environment`.
 
-## Exit codes
+## Mã thoát
 
-| Code | Meaning |
+| Mã | Ý nghĩa |
 |---|---|
-| 0 | Success |
-| 1 | Server error or rejected input; read `error_code` before retrying |
-| 2 | Bad flags, bad arguments, unknown command |
-| 4 | Not authenticated: `sepay login` |
-| 5 | Token lacks the required scope: `sepay auth refresh --scopes <scope>` |
-| 6 | Your local handler did not accept the event (`webhook test`) |
-| 7 | The server demanded an OTP; do this action in the web app |
-| 8 | Your account or company is not allowed to do this |
+| 0 | Thành công |
+| 1 | Lỗi phía server, lỗi mạng, hoặc dữ liệu bị từ chối; đọc `error_code` trước khi chạy lại |
+| 2 | Sai flag, sai tham số, lệnh không tồn tại |
+| 4 | Chưa đăng nhập: `sepay login` |
+| 5 | Token thiếu quyền (scope) cần thiết: `sepay auth refresh --scopes <scope>` |
+| 6 | Handler trên máy bạn không nhận sự kiện (`webhook test`) |
+| 7 | Server yêu cầu OTP; hãy thực hiện thao tác này trên web |
+| 8 | Tài khoản hoặc công ty của bạn không được phép làm việc này |
 
-Errors go to `stderr`, output to `stdout`. Under `--json` the error is JSON too, with `error_code`
-and `exit_code`. Full list: `sepay docs exit-codes`.
+Lỗi in ra `stderr`, kết quả in ra `stdout`. Khi dùng `--json`, lỗi cũng ở dạng JSON, kèm
+`error_code` và `exit_code`. Danh sách đầy đủ: `sepay docs exit-codes`.
 
-## Shell completion
+## Tự hoàn thành lệnh (shell completion)
 
-From a release archive or npm, run once:
+Nếu cài từ gói release hoặc npm, chạy một lần:
 
 ```bash
-mkdir -p ~/.local/share/bash-completion/completions && sepay completion bash > ~/.local/share/bash-completion/completions/sepay   # needs bash-completion
-mkdir -p ~/.zfunc && sepay completion zsh > ~/.zfunc/_sepay   # ~/.zshrc: fpath+=~/.zfunc before compinit
+mkdir -p ~/.local/share/bash-completion/completions && sepay completion bash > ~/.local/share/bash-completion/completions/sepay   # cần bash-completion
+mkdir -p ~/.zfunc && sepay completion zsh > ~/.zfunc/_sepay   # ~/.zshrc: fpath+=~/.zfunc trước compinit
 sepay completion fish > ~/.config/fish/completions/sepay.fish
-sepay completion powershell | Out-String | Invoke-Expression   # append to $PROFILE
+sepay completion powershell | Out-String | Invoke-Expression   # thêm vào $PROFILE
 ```
 
-## Documentation
+## Tài liệu
 
-| Topic | Command |
+| Chủ đề | Lệnh |
 |---|---|
-| What SePay is, which payment path to pick | `sepay docs overview` |
-| Command order for common tasks | `sepay docs flows` |
-| Webhook body and signature headers | `sepay docs webhook-payload` |
-| Payment Gateway order IPN | `sepay docs ipn-payload` |
-| Calling the SePay API directly from your app | `sepay docs api` |
+| SePay là gì, chọn cách thanh toán nào | `sepay docs overview` |
+| Thứ tự lệnh cho các tác vụ thường gặp | `sepay docs flows` |
+| Body webhook và các header chữ ký | `sepay docs webhook-payload` |
+| IPN đơn hàng của Cổng thanh toán | `sepay docs ipn-payload` |
+| Gọi SePay API trực tiếp từ ứng dụng của bạn | `sepay docs api` |
 
-Full documentation: [developer.sepay.vn/vi/tien-ich-khac/sepay-cli](https://developer.sepay.vn/vi/tien-ich-khac/sepay-cli).
+Tài liệu đầy đủ: [developer.sepay.vn/vi/tien-ich-khac/sepay-cli](https://developer.sepay.vn/vi/tien-ich-khac/sepay-cli).
 
-## Contributing
+## Đóng góp
 
-[CONTRIBUTING.md](CONTRIBUTING.md). Report a security vulnerability: [SECURITY.md](SECURITY.md).
+[CONTRIBUTING.md](CONTRIBUTING.md). Báo cáo lỗ hổng bảo mật: [SECURITY.md](SECURITY.md).
 
-## License
+## Giấy phép
 
 [Apache-2.0](LICENSE) © SePay JSC.

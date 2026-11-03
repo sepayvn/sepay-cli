@@ -899,7 +899,7 @@ func TestListen_RetriesANon2xxWhenTheWebhookAsksForIt(t *testing.T) {
 	}
 }
 
-func TestWebhookTag_NamesTransactionWholeAndWebhookShort(t *testing.T) {
+func TestWebhookTag_NamesBothIdsWhole(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
 	fr, err := listen.Decode([]byte(`{"transaction_xid":"8f2c1a9e-1234-11f1-b996-fa163e2f7c98",` +
 		`"webhook_xid":"a9bed278-8a2c-11f1-b996-fa163e2f7c98","payload":{"id":92704}}`))
@@ -907,7 +907,7 @@ func TestWebhookTag_NamesTransactionWholeAndWebhookShort(t *testing.T) {
 
 	got := webhookTag(ios, fr)
 	assert.Contains(t, got, "txn=8f2c1a9e-1234-11f1-b996-fa163e2f7c98", "the whole xid, not a segment")
-	assert.Contains(t, got, "wh=a9bed278")
+	assert.Contains(t, got, "wh=a9bed278-8a2c-11f1-b996-fa163e2f7c98", "the whole xid, pasteable into webhook get")
 	assert.NotContains(t, got, "92704", "the payload's numeric id is not a handle any command accepts")
 	assert.Less(t, strings.Index(got, "txn="), strings.Index(got, "wh="))
 }

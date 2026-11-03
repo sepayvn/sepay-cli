@@ -56,6 +56,9 @@ jobs:
         uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
           version: v2.12.2
+      # Runs under alpine's busybox sh too, so POSIX sh is the target, not bash.
+      - name: shellcheck install.sh
+        run: shellcheck -s sh scripts/install.sh
 
   test:
     runs-on: ubuntu-latest

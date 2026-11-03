@@ -124,7 +124,7 @@ func (c *Client) do(ctx context.Context, method, path string, bodyBytes []byte) 
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, api.NewTransportError(req.URL.Host, c.httpClient.Timeout, err)
 		}
 		body, err := api.ReadBody(resp)
 		if err != nil {

@@ -379,7 +379,7 @@ func resolveReplayTarget(ctx context.Context, f *cmdutil.Factory, transactionID,
 		targets = append(targets, t)
 		choices = append(choices, cmdutil.PromptChoice{
 			Label: fmt.Sprintf("%s · %s · %s · txn %s · %s", l.CreatedAt, l.Status, intOrDash(l.ResponseStatusCode),
-				listen.ShortID(t.TransactionID), l.urlLabel()),
+				t.TransactionID, l.urlLabel()),
 			Value: strconv.Itoa(len(targets) - 1),
 		})
 	}
@@ -694,7 +694,7 @@ func runLogs(ctx context.Context, f *cmdutil.Factory, query url.Values) error {
 		t := jsonfmt.NewTable("DATE", "STATUS", "CODE", "REPLAY", "TRANSACTION", "WEBHOOK", "URL").Truncatable("URL")
 		for _, l := range logs {
 			t.AddRow(l.CreatedAt, logStatus(f, l.Status), intOrDash(l.ResponseStatusCode), f.YesNo(l.IsReplay),
-				jsonfmt.OrDash(strOrEmpty(l.TransactionID)), jsonfmt.OrDash(listen.ShortID(strOrEmpty(l.WebhookXID))), l.urlLabel())
+				jsonfmt.OrDash(strOrEmpty(l.TransactionID)), jsonfmt.OrDash(strOrEmpty(l.WebhookXID)), l.urlLabel())
 		}
 		return f.RenderTable(t)
 	}); err != nil {

@@ -113,7 +113,7 @@ func (c *Client) Open(ctx context.Context, hubURL, listenKey string, heartbeat t
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, api.NewTransportError(req.URL.Host, c.httpClient.Timeout, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer func() { _ = resp.Body.Close() }()

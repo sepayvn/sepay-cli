@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,31 +78,34 @@ func takeFileLock(path string, acquire func(*os.File) (bool, error)) (*FileLock,
 
 // TryLockFileFor is TryLockFile with a bounded wait, for locks held only across a short rewrite.
 func TryLockFileFor(path string, wait time.Duration) (*FileLock, bool, error) {
-	deadline := time.Now().Add(wait)
-	for {
-		lock, ok, err := TryLockFile(path)
-		if err != nil || ok {
-			return lock, ok, err
-		}
-		if time.Now().After(deadline) {
-			return nil, false, nil
-		}
-		time.Sleep(lockPoll / 10)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	return TryLockFileContext(ctx, path)
 }
 
 // TrySharedLockFileFor is TrySharedLockFile with a bounded wait.
 func TrySharedLockFileFor(path string, wait time.Duration) (*FileLock, bool, error) {
-	deadline := time.Now().Add(wait)
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	return waitForLock(ctx, func() (*FileLock, bool, error) { return TrySharedLockFile(path) })
+}
+
+// TryLockFileContext is TryLockFile, waiting until ctx is done; ok is false when it is, with no error.
+func TryLockFileContext(ctx context.Context, path string) (*FileLock, bool, error) {
+	return waitForLock(ctx, func() (*FileLock, bool, error) { return TryLockFile(path) })
+}
+
+func waitForLock(ctx context.Context, try func() (*FileLock, bool, error)) (*FileLock, bool, error) {
 	for {
-		lock, ok, err := TrySharedLockFile(path)
+		lock, ok, err := try()
 		if err != nil || ok {
 			return lock, ok, err
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
 			return nil, false, nil
+		case <-time.After(lockPoll / 10):
 		}
-		time.Sleep(lockPoll / 10)
 	}
 }
 

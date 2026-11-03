@@ -22,7 +22,9 @@ func TestReadBody_ReadErrorNotSwallowed(t *testing.T) {
 	resp := &http.Response{Body: io.NopCloser(errReader{})}
 	_, err := ReadBody(resp)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "could not read server response")
+	var te *TransportError
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, "the connection to SePay was cut off", te.Reason())
 }
 
 func TestPost_SendsBodyAndIdempotencyKey(t *testing.T) {

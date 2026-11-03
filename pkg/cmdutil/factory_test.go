@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -121,6 +123,53 @@ func TestResolveToken_RefreshesExpired(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "new_at", h.Profiles["work"].OAuthToken)
 	assert.Equal(t, "new_rt", h.Profiles["work"].RefreshToken)
+}
+
+// Two processes that find the same expired token must spend its refresh token once: the server
+// rotates it on use, and the one that spends it second gets invalid_grant and revokes the profile.
+func TestResolveToken_ConcurrentRefreshSpendsTokenOnce(t *testing.T) {
+	dir := t.TempDir()
+	seedExpired(t, dir)
+
+	var mu sync.Mutex
+	spent := map[string]bool{}
+	exchanges := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		rt := r.PostForm.Get("refresh_token")
+		mu.Lock()
+		reused := spent[rt]
+		spent[rt] = true
+		exchanges++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if reused {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		// Hold the answer so the other process reaches the server before this pair is stored.
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"access_token":"new_at","refresh_token":"new_rt","expires_in":3600,"scope":"sandbox"}`)
+	}))
+	defer srv.Close()
+
+	got := make([]string, 2)
+	var wg sync.WaitGroup
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got[i] = factoryFor(dir, srv.URL).resolveToken()
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, []string{"new_at", "new_at"}, got)
+	assert.Equal(t, 1, exchanges, "the second process must reuse the stored pair")
+	h, err := config.LoadHostsFrom(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "new_rt", h.Profiles["work"].RefreshToken, "the rotated pair survives")
 }
 
 func TestResolveToken_RefreshFailureFallsBack(t *testing.T) {
@@ -268,6 +317,35 @@ func TestResolveToken_LateRefreshDoesNotUndoALogout(t *testing.T) {
 
 	f := factoryFor(dir, srv.URL)
 	assert.NotEqual(t, "stale_at", f.resolveToken(), "the exchange's result must not be used")
+
+	h, err := config.LoadHostsFrom(dir)
+	require.NoError(t, err)
+	assert.NotContains(t, h.Profiles, "work", "the logged-out profile stays gone")
+}
+
+func TestTokenForProfile_LogoutBeforeRefreshKeepsTheResolvedProfile(t *testing.T) {
+	dir := t.TempDir()
+	seedExpired(t, dir)
+
+	f := factoryFor(dir, "http://127.0.0.1:1")
+	f.Credentials = func() (*auth.Manager, error) {
+		h, err := config.LoadHostsFrom(dir)
+		if err != nil {
+			return nil, err
+		}
+		// Another process logs the profile out after this one loaded it.
+		other, err := config.LoadHostsFrom(dir)
+		require.NoError(t, err)
+		delete(other.Profiles, "work")
+		other.Active = ""
+		require.NoError(t, other.Save())
+		return auth.NewManager(h), nil
+	}
+
+	host, token, err := f.TokenForProfile("work")
+	require.NoError(t, err)
+	assert.Equal(t, "my.sepay.vn", host)
+	assert.Equal(t, "old_at", token, "an unreachable refresh leaves the stored token")
 
 	h, err := config.LoadHostsFrom(dir)
 	require.NoError(t, err)
@@ -498,4 +576,31 @@ func TestRenewRejectedToken_UnreachableHostIsReportedStale(t *testing.T) {
 	f := factoryFor(dir, srv.URL)
 	assert.Empty(t, f.renewRejectedToken(context.Background(), "old_at"))
 	assert.ErrorIs(t, f.StaleTokenRefresh(), ErrTokenRefreshUnreachable)
+}
+
+// Another process holds the refresh lock and the user presses Ctrl-C: automatic renewal stops at
+// once instead of waiting out the lock, and spends no refresh token.
+func TestRefreshIfExpired_InterruptStopsTheLockWait(t *testing.T) {
+	dir := t.TempDir()
+	seedExpired(t, dir)
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { atomic.AddInt32(&hits, 1) }))
+	defer srv.Close()
+
+	held, ok, err := config.TryLockFile(filepath.Join(dir, ".refresh.lock"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	defer held.Release()
+
+	f := factoryFor(dir, srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	f.SetContext(ctx)
+
+	start := time.Now()
+	_, token, err := f.TokenForProfile("work")
+	require.NoError(t, err)
+	assert.Equal(t, "old_at", token, "the stored token is used; the caller's request then stops on the same Ctrl-C")
+	assert.Less(t, time.Since(start), 2*time.Second, "the wait must not run out the 30s refresh budget")
+	assert.Zero(t, atomic.LoadInt32(&hits), "no refresh token is spent after Ctrl-C")
 }

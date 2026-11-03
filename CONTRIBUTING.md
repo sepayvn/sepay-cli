@@ -88,7 +88,13 @@ Everything happens on GitHub; nobody builds or publishes from a laptop.
    refuses `--provenance` from a private repository). Once it is public, set `NPM_PROVENANCE=true`
    and add required reviewers to the `release` environment; until the variable is set the npm job
    refuses to publish.
-5. A broken version is never unpublished: fix forward with a new version, and mark the bad one
+5. Homebrew (`sepayvn/homebrew-sepay-cli`) and Scoop (`sepayvn/scoop-sepay-cli`) get a new cask / manifest
+   from the same GoReleaser run, only while the repository variable `PUBLISH_TAPS` is `true`, and
+   never for a prerelease. The push uses a GitHub App token minted in `release.yml` (variable
+   `RELEASER_APP_CLIENT_ID`, secret `RELEASER_APP_PRIVATE_KEY`; the App is installed on those two
+   repositories only). Leave `PUBLISH_TAPS` unset until the repository is public: the cask and the
+   manifest point at Release downloads, which a private repository does not serve.
+6. A broken version is never unpublished: fix forward with a new version, and mark the bad one
    `npm deprecate sepay-cli@X.Y.Z "use X.Y.Z+1"`.
 
 ### First-time setup (once per package)

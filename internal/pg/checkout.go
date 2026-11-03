@@ -81,7 +81,7 @@ func (c *Client) InitCheckout(ctx context.Context, p CheckoutParams) (string, er
 	}
 	resp, err := noRedirect.Do(req)
 	if err != nil {
-		return "", err
+		return "", api.NewTransportError(req.URL.Host, noRedirect.Timeout, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

@@ -5,8 +5,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/sepayvn/sepay-cli/internal/api"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,4 +53,14 @@ func TestOpen_HeaderTimeoutDoesNotCutTheStream(t *testing.T) {
 	ev, err := stream.Read(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "ready", ev.Name)
+}
+
+func TestOpen_UnreachableHubIsATransportError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.Close()
+
+	_, err := newClient(time.Second).Open(context.Background(), srv.URL, "lk_test", time.Second)
+	var te *api.TransportError
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, strings.TrimPrefix(srv.URL, "http://")+" refused the connection; check your internet connection and retry", err.Error())
 }

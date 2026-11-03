@@ -11,6 +11,7 @@ on the exit code and the `error_code`, never on the message text.
 |---|:--:|---|
 | `unauthorized` | 4 | The session expired or was revoked. `sepay login` |
 | `insufficient_scope` | 5 | The token cannot do this on production. `sepay auth refresh --scopes <scope>` |
+| `network_error` | 1 | No usable answer came back: no connection, a DNS failure, a refused or cut-off connection, a timeout or an untrusted certificate. Calls to the SePay API are tried up to 3 more times first, except a create without an idempotency key and a conditional write (`paycode set`) whose first attempt may have landed; sign-in, token and product calls fail on the first try, and `webhook listen` reconnects on its own. Check your internet connection and run it again. A request you cancel with Ctrl+C is `interrupted`, not this. Set by the CLI, never by the server |
 | `rate_limited` | 1 | Too many requests. The CLI honours `Retry-After` and retries automatically |
 | `validation_error` | 1 | A field was rejected; the CLI lists the offending fields |
 | `feature_disabled` | 8 | The CLI is not enabled for your company on production. SePay turns it on |

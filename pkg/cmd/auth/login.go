@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/sepayvn/sepay-cli/internal/auth"
+	"github.com/sepayvn/sepay-cli/internal/config"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/jsonfmt"
 
@@ -112,11 +114,20 @@ func runLogin(ctx context.Context, f *cmdutil.Factory, opts *loginOptions) error
 	granted := strings.Fields(tok.Scope)
 	// The issuing host, not --hostname: SEPAY_OAUTH_URL may override it.
 	host := client.BaseURL()
-	usedFile, err := mgr.Set(profile, host, auth.CredentialFromToken(tok), granted, opts.insecure, tok.Email)
+	cred := auth.CredentialFromToken(tok)
+	usedFile, err := mgr.Set(profile, host, cred, granted, opts.insecure, tok.Email)
+	// A login has the user present, so a keychain that cannot store the token falls back to the file
+	// the same way --insecure-storage does, with the warning below; the choice stays on the profile.
+	autoFile := errors.Is(err, auth.ErrKeychainUnavailable)
+	if autoFile {
+		usedFile, err = mgr.Set(profile, host, cred, granted, true, tok.Email)
+	}
 	if err != nil {
 		return fmt.Errorf("could not store credentials: %w", err)
 	}
-	warnInsecureStorage(f, usedFile)
+	if usedFile {
+		f.WarnPlaintextStorage("your login", filepath.Join(mgr.Hosts().Dir(), config.HostsFile), autoFile)
+	}
 	// The profile label may now belong to another tenant: evict its cached product credentials.
 	if ps, perr := f.ProductStore(); perr == nil {
 		// Warn, never block. On a file-storage login a keychain error usually means "no secret service".

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -260,4 +261,16 @@ func TestClient_ServerErrorCarriesRequestID(t *testing.T) {
 	require.ErrorAs(t, err, &he)
 	assert.Equal(t, 500, he.StatusCode)
 	assert.Equal(t, "pg_req_1", he.RequestID)
+}
+
+func TestInitCheckout_UnreachableCheckoutHostIsATransportError(t *testing.T) {
+	checkoutSrv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	checkoutSrv.Close()
+	c := NewClient("http://127.0.0.1:1", &fakeCreds{id: "SP-1", secret: "spsk_1"})
+	c.CheckoutURL = checkoutSrv.URL
+
+	_, err := c.InitCheckout(context.Background(), CheckoutParams{Operation: "PURCHASE", OrderAmount: "1", Currency: "VND"})
+	var te *api.TransportError
+	require.ErrorAs(t, err, &te)
+	assert.Equal(t, strings.TrimPrefix(checkoutSrv.URL, "http://")+" refused the connection; check your internet connection and retry", err.Error())
 }

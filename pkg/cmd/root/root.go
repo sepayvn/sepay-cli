@@ -70,6 +70,7 @@ Start with ` + "`sepay docs overview`" + `.`,
 		SilenceUsage:  true,
 
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			f.SetContext(cmd.Context())
 			if err := cmdutil.ValidatePaging(cmd); err != nil {
 				return err
 			}

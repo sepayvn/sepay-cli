@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -96,4 +97,24 @@ func TestTrySharedLockFile_ExclusiveOnlyOnceEveryHolderIsGone(t *testing.T) {
 		t.Fatalf("shared must wait out an exclusive holder: ok=%v err=%v", ok, err)
 	}
 	exclusive.Release()
+}
+
+func TestTryLockFileContext_StopsWhenTheContextEnds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.lock")
+	held, ok, err := config.TryLockFile(path)
+	if err != nil || !ok {
+		t.Fatalf("first acquire: ok=%v err=%v", ok, err)
+	}
+	defer held.Release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	start := time.Now()
+	lock, ok, err := config.TryLockFileContext(ctx, path)
+	if err != nil || ok || lock != nil {
+		t.Fatalf("a cancelled wait takes no lock and reports no error: ok=%v err=%v", ok, err)
+	}
+	if waited := time.Since(start); waited > time.Second {
+		t.Fatalf("the wait outlived its context by %s", waited)
+	}
 }

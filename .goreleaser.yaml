@@ -78,6 +78,56 @@ release:
   # Without this a -rc tag becomes GitHub's "latest" release.
   prerelease: auto
 
+# Homebrew tap and Scoop bucket. Nothing is pushed until PUBLISH_TAPS is "true" (release.yml sets it
+# from the repository variable, after the repository is public); a prerelease is never pushed.
+# TAP_GITHUB_TOKEN is a GitHub App token for those two repositories only: GITHUB_TOKEN cannot write there.
+homebrew_casks:
+  - name: sepay
+    ids: [sepay]
+    repository:
+      owner: sepayvn
+      name: homebrew-sepay-cli
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/sepayvn/sepay-cli
+    description: SePay command line interface
+    license: Apache-2.0
+    commit_author:
+      name: sepay-cli-releaser[bot]
+      email: sepay-cli-releaser[bot]@users.noreply.github.com
+      use_github_app_token: true
+    commit_msg_template: "chore: sepay {{ .Tag }}"
+    skip_upload: '{{ if eq .Env.PUBLISH_TAPS "true" }}auto{{ else }}true{{ end }}'
+    completions:
+      bash: completions/sepay.bash
+      zsh: completions/_sepay
+      fish: completions/sepay.fish
+    # The binary is not signed or notarized by Apple: without this, macOS refuses to run it.
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/sepay"]
+          end
+
+scoops:
+  - name: sepay
+    ids: [sepay]
+    repository:
+      owner: sepayvn
+      name: scoop-sepay-cli
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: bucket
+    homepage: https://github.com/sepayvn/sepay-cli
+    description: SePay command line interface
+    license: Apache-2.0
+    commit_author:
+      name: sepay-cli-releaser[bot]
+      email: sepay-cli-releaser[bot]@users.noreply.github.com
+      use_github_app_token: true
+    commit_msg_template: "chore: sepay {{ .Tag }}"
+    skip_upload: '{{ if eq .Env.PUBLISH_TAPS "true" }}auto{{ else }}true{{ end }}'
+
 # Release notes come from release-please (CHANGELOG.md), not from GoReleaser.
 changelog:
   disable: true

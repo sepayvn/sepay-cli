@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/sepayvn/sepay-cli/internal/api"
 )
 
 // maxResponseBytes caps a token-management response body.
@@ -75,12 +77,12 @@ func (c *Client) doBearer(ctx context.Context, method, path, accessToken string,
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return api.NewTransportError(req.URL.Host, c.httpClient.Timeout, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return err
+		return api.NewReadError(req.URL.Host, err)
 	}
 
 	if !looksLikeJSON(respBody) {

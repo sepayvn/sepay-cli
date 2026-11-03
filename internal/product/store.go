@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/sepayvn/sepay-cli/internal/config"
+	"github.com/sepayvn/sepay-cli/internal/keychain"
 
-	"github.com/zalando/go-keyring"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,8 +29,8 @@ var ErrNotCached = errors.New("no cached product credential")
 // Credentials never fall back to the plaintext file on their own.
 var ErrKeychainUnavailable = errors.New("could not store the product credential in the OS keychain")
 
-// keychain lets tests fail Get and Delete independently, which go-keyring's mock cannot.
-type keychain interface {
+// secretStore lets tests fail Get and Delete independently, which go-keyring's mock cannot.
+type secretStore interface {
 	Get(service, key string) (string, error)
 	Set(service, key, value string) error
 	Delete(service, key string) error
@@ -38,15 +38,15 @@ type keychain interface {
 
 type osKeychain struct{}
 
-func (osKeychain) Get(service, key string) (string, error) { return keyring.Get(service, key) }
-func (osKeychain) Set(service, key, value string) error    { return keyring.Set(service, key, value) }
-func (osKeychain) Delete(service, key string) error        { return keyring.Delete(service, key) }
+func (osKeychain) Get(service, key string) (string, error) { return keychain.Get(service, key) }
+func (osKeychain) Set(service, key, value string) error    { return keychain.Set(service, key, value) }
+func (osKeychain) Delete(service, key string) error        { return keychain.Delete(service, key) }
 
 // Store persists product credentials in the OS keychain, or a 0600 products.yml when file storage
 // was chosen (--insecure-storage, or a profile signed in that way).
 type Store struct {
 	dir string
-	kr  keychain
+	kr  secretStore
 }
 
 // NewStore returns a Store persisting under the given config directory.
@@ -85,7 +85,7 @@ func (s *Store) Set(profile, prod, env string, c *Credential, insecure bool) (us
 
 	if insecure {
 		// Get reads the keychain first, so a leftover entry would shadow the file write.
-		if derr := s.kr.Delete(keyringService, key); derr != nil && !errors.Is(derr, keyring.ErrNotFound) {
+		if derr := s.kr.Delete(keyringService, key); derr != nil && !errors.Is(derr, keychain.ErrNotFound) {
 			if _, gerr := s.kr.Get(keyringService, key); gerr == nil {
 				return true, fmt.Errorf("a keychain copy of the %s %s credential could not be removed and would shadow the new value: %w", prod, env, derr)
 			}
@@ -98,7 +98,7 @@ func (s *Store) Set(profile, prod, env string, c *Credential, insecure bool) (us
 		return false, err
 	}
 	if err := s.kr.Set(keyringService, key, string(data)); err != nil {
-		return false, fmt.Errorf("%w (%v); to keep it in a 0600 file instead, run: sepay login --insecure-storage", ErrKeychainUnavailable, err)
+		return false, fmt.Errorf("%w (%v); to keep it in a 0600 file instead, run: sepay login", ErrKeychainUnavailable, err)
 	}
 	_ = s.clearFile(key) // drop any stale plaintext copy
 	return false, nil
@@ -111,7 +111,7 @@ func (s *Store) EvictProfile(profile string) error {
 	for _, prod := range knownProducts {
 		for _, env := range []string{config.EnvSandbox, config.EnvProduction} {
 			err := s.kr.Delete(keyringService, cacheKey(profile, prod, env))
-			if err != nil && !errors.Is(err, keyring.ErrNotFound) && keyErr == nil {
+			if err != nil && !errors.Is(err, keychain.ErrNotFound) && keyErr == nil {
 				keyErr = fmt.Errorf("keychain: %w", err)
 			}
 		}
@@ -142,11 +142,12 @@ type productsDoc struct {
 	Credentials map[string]*Credential `yaml:"credentials"`
 }
 
-func (s *Store) path() string { return filepath.Join(s.dir, ProductsFile) }
+// Path is the 0600 products.yml the store falls back to.
+func (s *Store) Path() string { return filepath.Join(s.dir, ProductsFile) }
 
 func (s *Store) readFile() (*productsDoc, error) {
 	doc := &productsDoc{Credentials: map[string]*Credential{}}
-	data, err := os.ReadFile(s.path())
+	data, err := os.ReadFile(s.Path())
 	if errors.Is(err, os.ErrNotExist) {
 		return doc, nil
 	}

@@ -27,7 +27,7 @@ func TestStore_KeychainRoundtrip(t *testing.T) {
 	assert.Equal(t, "SP-1", got.MerchantID)
 	assert.Equal(t, "spsk_x", got.SecretKey)
 
-	_, statErr := os.Stat(s.path())
+	_, statErr := os.Stat(s.Path())
 	assert.True(t, os.IsNotExist(statErr))
 }
 
@@ -47,7 +47,7 @@ func TestStore_InsecureWritesFile0600(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, usedFile)
 
-	info, err := os.Stat(s.path())
+	info, err := os.Stat(s.Path())
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 
@@ -64,7 +64,7 @@ func TestStore_KeychainUnavailableRefusesInsteadOfWritingTheFile(t *testing.T) {
 
 	usedFile, err := s.Set("default", PG, "sandbox", basicCred(), false)
 	require.ErrorIs(t, err, ErrKeychainUnavailable)
-	assert.Contains(t, err.Error(), "--insecure-storage")
+	assert.Contains(t, err.Error(), "run: sepay login")
 	assert.False(t, usedFile)
 	_, statErr := os.Stat(dir + "/" + ProductsFile)
 	assert.ErrorIs(t, statErr, os.ErrNotExist, "nothing written to the plaintext file")

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zalando/go-keyring"
+	"github.com/sepayvn/sepay-cli/internal/keychain"
 )
 
 const keyringService = "sepay"
@@ -24,15 +24,15 @@ func (keyringStore) set(key string, c *Credential) error {
 	if err != nil {
 		return err
 	}
-	if err := keyring.Set(keyringService, key, string(data)); err != nil {
+	if err := keychain.Set(keyringService, key, string(data)); err != nil {
 		return fmt.Errorf("keychain: %w", err)
 	}
 	return nil
 }
 
 func (keyringStore) get(key string) (*Credential, error) {
-	data, err := keyring.Get(keyringService, key)
-	if errors.Is(err, keyring.ErrNotFound) {
+	data, err := keychain.Get(keyringService, key)
+	if errors.Is(err, keychain.ErrNotFound) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -46,8 +46,8 @@ func (keyringStore) get(key string) (*Credential, error) {
 }
 
 func (keyringStore) delete(key string) error {
-	err := keyring.Delete(keyringService, key)
-	if errors.Is(err, keyring.ErrNotFound) {
+	err := keychain.Delete(keyringService, key)
+	if errors.Is(err, keychain.ErrNotFound) {
 		return nil
 	}
 	if err != nil {

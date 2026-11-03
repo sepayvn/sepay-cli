@@ -60,3 +60,25 @@ func TestPrintPageInfo_QuietKeepsOnlyTheTruncationNotice(t *testing.T) {
 		})
 	}
 }
+
+// Only the login that just fell back blames the keychain; a file chosen earlier gets one line.
+func TestWarnPlaintextStorage_BlamesTheKeychainOnlyWhenItFailed(t *testing.T) {
+	cases := []struct {
+		name           string
+		keychainFailed bool
+		want           string
+	}{
+		{"chosen earlier", false, "! the PG credential was saved in a file only your user account can read: /c/products.yml\n"},
+		{"keychain failed", true, "! this computer has no password store sepay can use (OS keychain), so the PG credential was saved\n" +
+			"  in a file only your user account can read: /c/products.yml\n" +
+			"  nothing else to do; on a shared computer, run sepay logout when you are done\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ios, _, _, errOut := iostreams.Test()
+			f := &Factory{IOStreams: ios}
+			f.WarnPlaintextStorage("the PG credential", "/c/products.yml", tc.keychainFailed)
+			assert.Equal(t, tc.want, errOut.String())
+		})
+	}
+}
