@@ -469,6 +469,7 @@ func Run(cmd *cobra.Command, f *cmdutil.Factory, src Source, opts Options) error
 				noteLine(f, "warning: %d event(s) still pending retry — dropped (retries are not persisted)\n", pending)
 			}
 		}
+		coord.close()
 	}()
 
 	// Revocation is server-authoritative: the hub session is cut and the re-mint fails 401/403.

@@ -613,6 +613,19 @@ func (c *coordinator) releaseChains(ordinals []int) {
 	}
 }
 
+// close drops every marker still held; Windows cannot delete a marker while its handle is open.
+func (c *coordinator) close() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for n, h := range c.held {
+		h.lock.Release()
+		delete(c.held, n)
+	}
+}
+
 type chainMeta struct {
 	next  int
 	cap   int

@@ -19,15 +19,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testCoordinator closes its markers before t.TempDir removes them; call it after setting SEPAY_CONFIG_DIR.
+func testCoordinator(t *testing.T, scope, origin string, retryMax int) *coordinator {
+	t.Helper()
+	c := newCoordinator(scope, origin, retryMax)
+	require.NotNil(t, c)
+	t.Cleanup(c.close)
+	return c
+}
+
 // twoListeners returns two coordinators on one channel and handler. flock is per open file
 // description, so they contend exactly as two processes do.
 func twoListeners(t *testing.T) (*coordinator, *coordinator) {
 	t.Helper()
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	a := newCoordinator("webhook", "http://localhost:3000/", DefaultForwardRetries)
-	b := newCoordinator("webhook", "http://localhost:3000/", DefaultForwardRetries)
-	require.NotNil(t, a)
-	require.NotNil(t, b)
+	a := testCoordinator(t, "webhook", "http://localhost:3000/", DefaultForwardRetries)
+	b := testCoordinator(t, "webhook", "http://localhost:3000/", DefaultForwardRetries)
 	return a, b
 }
 
@@ -47,11 +54,10 @@ func TestDeliveryID_FallsBackToTheRawFrame(t *testing.T) {
 
 func TestCoordinatorPath_SeparatesScopeOriginAndDelivery(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	base := newCoordinator("webhook", "http://localhost:3000/", 7)
-	require.NotNil(t, base)
+	base := testCoordinator(t, "webhook", "http://localhost:3000/", 7)
 
-	otherScope := newCoordinator("pg_ipn", "http://localhost:3000/", 7)
-	otherOrigin := newCoordinator("webhook", "http://localhost:4000/", 7)
+	otherScope := testCoordinator(t, "pg_ipn", "http://localhost:3000/", 7)
+	otherOrigin := testCoordinator(t, "webhook", "http://localhost:4000/", 7)
 
 	assert.NotEqual(t, base.path(deliveryFrame), otherScope.path(deliveryFrame),
 		"a channel is an isolation boundary")
@@ -144,7 +150,7 @@ func TestCoordinator_SweepsOnlyStaleClaims(t *testing.T) {
 	old := time.Now().Add(-claimStaleAge - time.Hour)
 	require.NoError(t, os.Chtimes(stale, old, old))
 
-	require.NotNil(t, newCoordinator("webhook", "http://localhost:3000/", 7))
+	testCoordinator(t, "webhook", "http://localhost:3000/", 7)
 
 	assert.NoFileExists(t, stale)
 	assert.FileExists(t, fresh, "a claim a live chain could still own must survive")
@@ -173,7 +179,7 @@ func TestCoordinator_SweepsEndedChainsEarlyAndKeepsLiveOnes(t *testing.T) {
 	torn := write("torn.json", `{"ordinal":5,"done":tr`, mid)
 	fresh := write("fresh.json", `{"ordinal":6,"done":true}`, claimEndedAge/2)
 
-	require.NotNil(t, newCoordinator("webhook", "http://localhost:3000/", 7))
+	testCoordinator(t, "webhook", "http://localhost:3000/", 7)
 
 	for _, path := range []string{done, killed, abandoned} {
 		assert.NoFileExists(t, path, "an ended chain goes on the short threshold")
@@ -412,10 +418,9 @@ func TestCoordinator_OrdinalNamesTheDeliveryNotTheSession(t *testing.T) {
 
 func TestCoordinator_SequenceIsPerChannelAndHandler(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	webhook := newCoordinator("webhook", "http://localhost:3000/", 7)
-	otherPort := newCoordinator("webhook", "http://localhost:4000/", 7)
-	otherChannel := newCoordinator("pg_ipn", "http://localhost:3000/", 7)
-	require.NotNil(t, webhook)
+	webhook := testCoordinator(t, "webhook", "http://localhost:3000/", 7)
+	otherPort := testCoordinator(t, "webhook", "http://localhost:4000/", 7)
+	otherChannel := testCoordinator(t, "pg_ipn", "http://localhost:3000/", 7)
 
 	assert.Equal(t, 1, webhook.ordinalFor(deliveryFrame))
 	assert.Equal(t, 1, otherPort.ordinalFor(deliveryFrame), "a different handler counts on its own")
@@ -426,13 +431,12 @@ func TestCoordinator_SequenceIsPerChannelAndHandler(t *testing.T) {
 func TestCoordinator_SweepKeepsTheSequence(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("SEPAY_CONFIG_DIR", dir)
-	c := newCoordinator("webhook", "http://localhost:3000/", 7)
-	require.NotNil(t, c)
+	c := testCoordinator(t, "webhook", "http://localhost:3000/", 7)
 	require.Equal(t, 1, c.ordinalFor(deliveryFrame))
 
 	old := time.Now().Add(-claimStaleAge - time.Hour)
 	require.NoError(t, os.Chtimes(c.seqPath(), old, old))
-	require.NotNil(t, newCoordinator("webhook", "http://localhost:3000/", 7))
+	testCoordinator(t, "webhook", "http://localhost:3000/", 7)
 
 	assert.FileExists(t, c.seqPath(), "an old sequence is still the authority on what comes next")
 	assert.Equal(t, 2, c.ordinalFor(Frame{ID: "evt_after_sweep"}), "numbering continues, it does not restart")
@@ -466,10 +470,8 @@ func TestClaimStaleAge_CoversTheLongestPossibleChain(t *testing.T) {
 
 func TestCoordinator_GiveUpLeavesAPeerTheRungsItIsOwed(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	small := newCoordinator("webhook", "http://localhost:3000/", 7)
-	big := newCoordinator("webhook", "http://localhost:3000/", 10)
-	require.NotNil(t, small)
-	require.NotNil(t, big)
+	small := testCoordinator(t, "webhook", "http://localhost:3000/", 7)
+	big := testCoordinator(t, "webhook", "http://localhost:3000/", 10)
 
 	ordinal := small.ordinalFor(deliveryFrame)
 	require.NotZero(t, ordinal)
@@ -490,10 +492,8 @@ func TestCoordinator_GiveUpLeavesAPeerTheRungsItIsOwed(t *testing.T) {
 
 func TestCoordinator_GiveUpEndsTheChainOnAnAgreedBudget(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	a := newCoordinator("webhook", "http://localhost:3000/", 7)
-	b := newCoordinator("webhook", "http://localhost:3000/", 7)
-	require.NotNil(t, a)
-	require.NotNil(t, b)
+	a := testCoordinator(t, "webhook", "http://localhost:3000/", 7)
+	b := testCoordinator(t, "webhook", "http://localhost:3000/", 7)
 
 	ordinal := a.ordinalFor(deliveryFrame)
 	require.NotZero(t, ordinal)
@@ -506,8 +506,7 @@ func TestCoordinator_GiveUpEndsTheChainOnAnAgreedBudget(t *testing.T) {
 
 func TestCoordinator_GiveUpOnAFirstDeliveryRecordsNothing(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	c := newCoordinator("webhook", "http://localhost:3000/", 7)
-	require.NotNil(t, c)
+	c := testCoordinator(t, "webhook", "http://localhost:3000/", 7)
 
 	c.exhausted(job{frame: deliveryFrame, attempt: 7})
 	assert.Equal(t, sendIt, c.beforeAttempt(deliveryFrame, 1))

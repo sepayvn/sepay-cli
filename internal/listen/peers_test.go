@@ -37,10 +37,8 @@ func follower(t *testing.T) (*registry, *coordinator, *retryScheduler, *bytes.Bu
 	sched, _, _ := testScheduler(t, time.Hour)
 	t.Cleanup(func() { sched.stop() })
 
-	own := newCoordinator("webhook", peerOrigin, DefaultForwardRetries)
-	peer := newCoordinator("webhook", peerOrigin, DefaultForwardRetries)
-	require.NotNil(t, own)
-	require.NotNil(t, peer)
+	own := testCoordinator(t, "webhook", peerOrigin, DefaultForwardRetries)
+	peer := testCoordinator(t, "webhook", peerOrigin, DefaultForwardRetries)
 
 	reg := newRegistry(f, own, sched, peerOrigin)
 	require.NotNil(t, reg)
@@ -205,8 +203,7 @@ func TestRegistry_NeverAbandonsAChainAPeerStillHolds(t *testing.T) {
 
 func TestRegistry_ChainSurvivesOneOfTwoHoldersLeaving(t *testing.T) {
 	reg, peer, _, _, errOut := follower(t)
-	other := newCoordinator("webhook", peerOrigin, DefaultForwardRetries)
-	require.NotNil(t, other)
+	other := testCoordinator(t, "webhook", peerOrigin, DefaultForwardRetries)
 
 	ordinal := armPeer(t, peer, peerFrame, 1, time.Minute)
 	other.holdChain(peerFrame, ordinal)
@@ -356,8 +353,7 @@ func TestRegistry_SanitizesLabelsItReadsBack(t *testing.T) {
 
 func TestNewRegistry_MirrorsOnlyWhereStdoutIsForAPerson(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	coord := newCoordinator("webhook", peerOrigin, DefaultForwardRetries)
-	require.NotNil(t, coord)
+	coord := testCoordinator(t, "webhook", peerOrigin, DefaultForwardRetries)
 	sched, _, _ := testScheduler(t, time.Hour)
 	t.Cleanup(func() { sched.stop() })
 
@@ -559,10 +555,8 @@ func TestCoordinator_FollowerHelpersAreNilSafe(t *testing.T) {
 func TestRegistry_FollowsOnlyItsOwnChannelAndHandler(t *testing.T) {
 	reg, _, _, _, errOut := follower(t)
 
-	otherScope := newCoordinator("bankhub_ipn", peerOrigin, DefaultForwardRetries)
-	otherHandler := newCoordinator("webhook", "http://localhost:4000/", DefaultForwardRetries)
-	require.NotNil(t, otherScope)
-	require.NotNil(t, otherHandler)
+	otherScope := testCoordinator(t, "bankhub_ipn", peerOrigin, DefaultForwardRetries)
+	otherHandler := testCoordinator(t, "webhook", "http://localhost:4000/", DefaultForwardRetries)
 	armPeer(t, otherScope, peerFrame, 1, time.Minute)
 	armPeer(t, otherHandler, peerFrame, 1, time.Minute)
 
@@ -607,8 +601,7 @@ func TestCoordinator_StampsTheChannelOnTheStatesItSetsUp(t *testing.T) {
 	assert.Equal(t, a.channelID(), st.Channel)
 	assert.Equal(t, b.channelID(), st.Channel, "two sessions on one channel agree on it")
 
-	other := newCoordinator("pg_ipn", peerOrigin, DefaultForwardRetries)
-	require.NotNil(t, other)
+	other := testCoordinator(t, "pg_ipn", peerOrigin, DefaultForwardRetries)
 	assert.NotEqual(t, a.channelID(), other.channelID())
 
 	a.armed(Frame{ID: "evt_armed"}, chainMeta{next: 1, cap: 7, due: time.Now(), event: "x"})
@@ -668,8 +661,7 @@ func TestRegistry_KeepsAChainWhoseStateWasLockedThisTick(t *testing.T) {
 // A marker's mtime is never refreshed, so age says nothing about its holder.
 func TestCoordinator_SweepRemovesAMarkerOnlyWithItsState(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	c := newCoordinator("webhook", peerOrigin, DefaultForwardRetries)
-	require.NotNil(t, c)
+	c := testCoordinator(t, "webhook", peerOrigin, DefaultForwardRetries)
 
 	stale, live := Frame{ID: "evt_stale"}, Frame{ID: "evt_live"}
 	for _, fr := range []Frame{stale, live} {

@@ -192,8 +192,7 @@ func TestAdversarial_KillRacesTheMirror(t *testing.T) {
 func adversarialCoordinator(t *testing.T) *coordinator {
 	t.Helper()
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	c := newCoordinator("webhook", "http://localhost:3000/", DefaultForwardRetries)
-	require.NotNil(t, c)
+	c := testCoordinator(t, "webhook", "http://localhost:3000/", DefaultForwardRetries)
 	require.NoError(t, os.MkdirAll(c.dir, 0o700))
 	return c
 }

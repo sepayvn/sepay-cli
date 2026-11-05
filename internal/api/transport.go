@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"syscall"
 	"time"
 )
 
@@ -62,16 +61,16 @@ func (e *TransportError) Reason() string {
 		return fmt.Sprintf("cannot find %s (DNS lookup failed)", host)
 	case errors.As(e.Err, &certErr), errors.As(e.Err, &unknownCA), errors.As(e.Err, &hostErr):
 		return fmt.Sprintf("the secure connection to %s failed: its certificate is not trusted", host)
-	case errors.Is(e.Err, syscall.ECONNREFUSED):
+	case isConnRefused(e.Err):
 		return fmt.Sprintf("%s refused the connection", host)
-	case errors.Is(e.Err, syscall.ENETUNREACH), errors.Is(e.Err, syscall.EHOSTUNREACH):
+	case isNoRoute(e.Err):
 		return fmt.Sprintf("no network route to %s", host)
 	case errors.Is(e.Err, context.DeadlineExceeded), errors.As(e.Err, &netErr) && netErr.Timeout():
 		if e.Timeout > 0 {
 			return fmt.Sprintf("%s did not answer within %s", host, e.Timeout)
 		}
 		return fmt.Sprintf("%s did not answer in time", host)
-	case e.reading, errors.Is(e.Err, syscall.ECONNRESET), errors.Is(e.Err, io.ErrUnexpectedEOF), errors.Is(e.Err, io.EOF):
+	case e.reading, isConnReset(e.Err), errors.Is(e.Err, io.ErrUnexpectedEOF), errors.Is(e.Err, io.EOF):
 		return fmt.Sprintf("the connection to %s was cut off", host)
 	default:
 		return fmt.Sprintf("cannot reach %s", host)
