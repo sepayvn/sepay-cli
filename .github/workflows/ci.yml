@@ -161,7 +161,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: "v2.19.0" # pinned: the release job must build with a known GoReleaser
           args: check
@@ -236,7 +236,7 @@ jobs:
 
       # Build for real before checking. Without this every step below is inspecting an
       # empty directory and still going green.
-      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           version: "v2.19.0" # pinned: the release job must build with a known GoReleaser
           install-only: true
