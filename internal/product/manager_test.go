@@ -18,7 +18,7 @@ func countingManager(t *testing.T) (*Manager, *int32) {
 	t.Helper()
 	keyring.MockInit()
 	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"success","data":{"auth_type":"basic","merchant_id":"SP-1","secret_key":"spsk_x"}}`))

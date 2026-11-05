@@ -37,7 +37,7 @@ var ErrEventTooLarge = errors.New("sse event exceeded size cap")
 // ErrHeartbeatTimeout means no frame arrived within the watchdog window.
 var ErrHeartbeatTimeout = errors.New("no heartbeat from hub")
 
-// RetryableError is a transient subscribe failure (429 or 503) to retry after backoff.
+// RetryableError is a transient subscribe failure (429, 502, 503 or 504) to retry after backoff.
 type RetryableError struct {
 	StatusCode int
 	RetryAfter string
@@ -100,10 +100,10 @@ func clampHeartbeat(heartbeat time.Duration) time.Duration {
 }
 
 // Open subscribes to hubURL and returns a Stream. Errors: 401 *KeyRefusedError,
-// 403 *api.HTTPError, 429/503 *RetryableError.
+// 403 *api.HTTPError, 429/502/503/504 *RetryableError.
 func (c *Client) Open(ctx context.Context, hubURL, listenKey string, heartbeat time.Duration) (*Stream, error) {
 	heartbeat = clampHeartbeat(heartbeat)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(hubURL, "/")+"/subscribe", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(hubURL, "/")+"/subscribe", http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func statusError(resp *http.Response) error {
 		// The hub never sends 403, so one comes from a policy proxy. Fatal.
 		code, msg := decodeErr(body)
 		return &api.HTTPError{StatusCode: resp.StatusCode, Code: code, Message: msg, RequestID: resp.Header.Get("X-Request-Id")}
-	case http.StatusTooManyRequests, http.StatusServiceUnavailable:
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return &RetryableError{StatusCode: resp.StatusCode, RetryAfter: resp.Header.Get("Retry-After")}
 	default:
 		return &api.HTTPError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(body)), RequestID: resp.Header.Get("X-Request-Id")}

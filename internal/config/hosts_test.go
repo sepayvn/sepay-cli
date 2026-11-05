@@ -104,6 +104,9 @@ func TestHosts_MissingFileIsEmpty(t *testing.T) {
 }
 
 func TestHosts_SaveWrites0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits are meaningless on Windows")
+	}
 	dir := t.TempDir()
 	t.Setenv("SEPAY_CONFIG_DIR", dir)
 

@@ -42,6 +42,10 @@ installs only the one matching your machine:
 Before running the binary, `__PKG__` checks its SHA-256 against a table built into this package, and
 refuses to run on a mismatch.
 
+`__SCOPE__` is the npm organization of SePay JSC (Công ty CP SePay), which publishes all seven
+packages. The source lives in the company's GitHub organization, at
+<https://github.com/sepayvn/sepay-cli>; the two names differ, the owner is the same.
+
 ## Verifying where this package came from
 
 Two commands. There is no badge to trust instead.
@@ -55,11 +59,6 @@ The second must print `git+https://github.com/sepayvn/sepay-cli.git`. "Has prove
 *some* repository built it — anyone who takes over a package name can publish with full provenance
 from their own repository, and the check still passes. **The repository name is the part that
 carries the meaning.**
-
-Versions published while the source repository is still private, `latest` included, carry
-**no provenance**: `npm audit signatures` lists no attestation for them and the repository check
-above proves nothing. Provenance starts with the first version released after the repository
-becomes public; versions published before that never gain it.
 
 ## Known limitations of this channel
 
@@ -76,6 +75,6 @@ becomes public; versions published before that never gain it.
 Per-platform archives and the signed `checksums.txt` are attached to each GitHub Release:
 <https://github.com/sepayvn/sepay-cli/releases>
 
-Documentation: <https://developer.sepay.vn/vi/tien-ich-khac/sepay-cli>
+Documentation: <https://developer.sepay.vn/en/agents/cli>
 
 Apache-2.0 © Công ty CP SePay

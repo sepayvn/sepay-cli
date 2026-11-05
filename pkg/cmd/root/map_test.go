@@ -23,7 +23,7 @@ func TestMap_Paths_ListsOnlyRunnableCommands(t *testing.T) {
 
 	paths := strings.Split(strings.TrimSpace(out.String()), "\n")
 	assert.Contains(t, paths, "sepay webhook listen")
-	assert.Contains(t, paths, "sepay docs")
+	assert.NotContains(t, paths, "sepay glossary", "a help topic is not a command")
 	assert.Contains(t, paths, "sepay apikey list")
 	assert.NotContains(t, paths, "sepay report cashflow")
 }
@@ -78,7 +78,7 @@ func TestMap_JSON_CarriesCapabilityMetadata(t *testing.T) {
 	assert.Equal(t, "both", byPath["sepay transaction list"].Envs)
 
 	listen := byPath["sepay webhook listen"]
-	assert.Equal(t, "both", listen.Envs)
+	assert.Equal(t, "sandbox", listen.Envs)
 	var flags []string
 	for _, f := range listen.Flags {
 		flags = append(flags, f.Name)
@@ -104,7 +104,7 @@ func TestHelp_CarriesAgentGuidance(t *testing.T) {
 		{
 			name:     "root",
 			args:     []string{"--help"},
-			contains: []string{"[Agent guidance]", "sepay docs glossary", "sepay --map=paths"},
+			contains: []string{"[Agent guidance]", "sepay help glossary", "sepay --map=paths"},
 		},
 		{
 			name: "sandbox-only write states it, and drops the production-wave lines",
@@ -146,7 +146,7 @@ func TestHelp_ReportsLoginState(t *testing.T) {
 	cmd.SetArgs([]string{"webhook", "create", "--help"})
 	require.NoError(t, cmd.ExecuteContext(context.Background()))
 	assert.Contains(t, out.String(), warning)
-	assert.Contains(t, out.String(), "sepay docs api")
+	assert.Contains(t, out.String(), moreGuidance)
 
 	loggedIn, outLoggedIn := newTestRootLoggedIn(t, "default")
 	loggedIn.SetOut(outLoggedIn)
@@ -184,7 +184,7 @@ func TestRoot_BareInvocationPrintsHelp(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetArgs(nil)
 	require.NoError(t, cmd.ExecuteContext(context.Background()))
-	assert.Contains(t, out.String(), "Available Commands:")
+	assert.Contains(t, out.String(), "Core Commands:")
 }
 
 func TestAnnotations_StayWithinTheirVocabulary(t *testing.T) {
@@ -239,4 +239,25 @@ func TestRoot_GroupWithNoArgsPrintsHelp(t *testing.T) {
 	cmd.SetArgs([]string{"webhook"})
 	require.NoError(t, cmd.ExecuteContext(context.Background()))
 	assert.Contains(t, out.String(), "Available Commands:")
+}
+
+// A renamed flag's old spelling is hidden from help but still listed for agents, pointing at the new one.
+func TestMap_JSON_ListsOldFlagSpellings(t *testing.T) {
+	cmd, out := newTestRoot(t)
+	cmd.SetArgs([]string{"--map=json"})
+	require.NoError(t, cmd.ExecuteContext(context.Background()))
+	var m commandMap
+	require.NoError(t, json.Unmarshal(out.Bytes(), &m))
+
+	flags := map[string]flagInfo{}
+	for _, c := range m.Commands {
+		if c.Path == "sepay transaction list" {
+			for _, fl := range c.Flags {
+				flags[fl.Name] = fl
+			}
+		}
+	}
+	assert.Equal(t, "from", flags["transaction-date-from"].AliasOf)
+	assert.Equal(t, "search", flags["q"].AliasOf)
+	assert.Empty(t, flags["from"].AliasOf)
 }

@@ -2,22 +2,24 @@ package pg
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
+	"github.com/sepayvn/sepay-cli/pkg/cmdutil/prompttest"
 	"github.com/sepayvn/sepay-cli/pkg/iostreams"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Any HTTP response completes the delivery; only transport failures are retried.
-func TestIpnListenSource_RetriesTransportFailuresOnly(t *testing.T) {
+func TestIPNListenSource_RetriesTransportFailuresOnly(t *testing.T) {
 	src := ipnListenSource("")
 
 	require.Nil(t, src.RetryNon2xx,
@@ -26,7 +28,7 @@ func TestIpnListenSource_RetriesTransportFailuresOnly(t *testing.T) {
 		"PgIpnWorker queues with no last_retry_time, so retry 1 is due at once")
 }
 
-func TestIpnListenSource_OrderFilterDoesNotChangeRetry(t *testing.T) {
+func TestIPNListenSource_OrderFilterDoesNotChangeRetry(t *testing.T) {
 	src := ipnListenSource("INV-1")
 
 	require.NotNil(t, src.Accept)
@@ -34,7 +36,7 @@ func TestIpnListenSource_OrderFilterDoesNotChangeRetry(t *testing.T) {
 	assert.True(t, src.FirstRetryImmediate)
 }
 
-func TestIpnListenSource_MintsTheGatewayChannel(t *testing.T) {
+func TestIPNListenSource_MintsTheGatewayChannel(t *testing.T) {
 	src := ipnListenSource("")
 	assert.Equal(t, "/pg/ipn/listen", src.MintPath)
 	assert.Equal(t, src.MintPath, src.RevokePath, "the key is revoked where it was minted")
@@ -57,32 +59,32 @@ func TestOrderTag_NamesTheInvoiceNumber(t *testing.T) {
 }
 
 // apiTestFactory wires a Factory to a my.sepay.vn api/v2 server, which `pg ipn` talks to.
-func apiTestFactory(t *testing.T, h http.HandlerFunc) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
+func apiTestFactory(t *testing.T, h http.HandlerFunc) (*cmdutil.Factory, *bytes.Buffer) {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
-	ios, _, out, errOut := iostreams.Test()
+	ios, _, out, _ := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: ios, Global: &cmdutil.GlobalOptions{Output: "table", Env: "sandbox"}}
 	f.NewAPIClient = func() (*api.Client, error) {
 		c := api.NewClient(srv.URL, "test")
 		c.MaxRetries = 0
 		return c, nil
 	}
-	return f, out, errOut
+	return f, out
 }
 
-const pgIpnConfigured = `{"status":"success","data":{"configured":true,"ipn_url":"https://example.com/pg-ipn","auth_type":"SECRET_KEY","request_content_type":"application/json","secret_key":"****9999","active":true}}`
+const pgIPNConfigured = `{"status":"success","data":{"configured":true,"ipn_url":"https://example.com/pg-ipn","auth_type":"SECRET_KEY","request_content_type":"application/json","secret_key":"****9999","active":true}}`
 
-func TestPgIpnSet_SecretFromStdinReachesTheBody(t *testing.T) {
+func TestPgIPNSet_SecretFromStdinReachesTheBody(t *testing.T) {
 	var body []byte
-	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(pgIpnConfigured))
+			_, _ = w.Write([]byte(pgIPNConfigured))
 			return
 		}
 		body, _ = io.ReadAll(r.Body)
-		_, _ = w.Write([]byte(pgIpnConfigured))
+		_, _ = w.Write([]byte(pgIPNConfigured))
 	})
 	f.Global.Yes = true
 	in, ok := f.IOStreams.In.(*bytes.Buffer)
@@ -96,13 +98,13 @@ func TestPgIpnSet_SecretFromStdinReachesTheBody(t *testing.T) {
 	assert.Contains(t, string(body), `"auth_type":"SECRET_KEY"`, "a secret turns auth on, as the flag help says")
 }
 
-func TestPgIpnSet_RejectsMalformedURL(t *testing.T) {
+func TestPgIPNSet_RejectsMalformedURL(t *testing.T) {
 	posted := false
-	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			posted = true
 		}
-		_, _ = w.Write([]byte(pgIpnConfigured))
+		_, _ = w.Write([]byte(pgIPNConfigured))
 	})
 	f.Global.Yes = true
 
@@ -112,13 +114,13 @@ func TestPgIpnSet_RejectsMalformedURL(t *testing.T) {
 	assert.False(t, posted, "a malformed URL must not reach the API")
 }
 
-func TestPgIpnSet_EmptyStdinSendsNothing(t *testing.T) {
+func TestPgIPNSet_EmptyStdinSendsNothing(t *testing.T) {
 	posted := false
-	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			posted = true
 		}
-		_, _ = w.Write([]byte(pgIpnConfigured))
+		_, _ = w.Write([]byte(pgIPNConfigured))
 	})
 	f.Global.Yes = true
 
@@ -129,7 +131,7 @@ func TestPgIpnSet_EmptyStdinSendsNothing(t *testing.T) {
 }
 
 // The server answers a bad enum with a retryable 422.
-func TestPgIpnSet_RejectsUnknownEnumsBeforeAnyRequest(t *testing.T) {
+func TestPgIPNSet_RejectsUnknownEnumsBeforeAnyRequest(t *testing.T) {
 	for _, tt := range []struct {
 		flag, value, want string
 	}{
@@ -138,9 +140,9 @@ func TestPgIpnSet_RejectsUnknownEnumsBeforeAnyRequest(t *testing.T) {
 	} {
 		t.Run(tt.flag, func(t *testing.T) {
 			called := false
-			f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+			f, _ := apiTestFactory(t, func(w http.ResponseWriter, _ *http.Request) {
 				called = true
-				_, _ = w.Write([]byte(pgIpnConfigured))
+				_, _ = w.Write([]byte(pgIPNConfigured))
 			})
 			f.Global.Yes = true
 
@@ -153,15 +155,15 @@ func TestPgIpnSet_RejectsUnknownEnumsBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-func TestPgIpnSet_EmptyAuthTypeStillTurnsAuthOff(t *testing.T) {
+func TestPgIPNSet_EmptyAuthTypeStillTurnsAuthOff(t *testing.T) {
 	var body []byte
-	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(pgIpnConfigured))
+			_, _ = w.Write([]byte(pgIPNConfigured))
 			return
 		}
 		body, _ = io.ReadAll(r.Body)
-		_, _ = w.Write([]byte(pgIpnConfigured))
+		_, _ = w.Write([]byte(pgIPNConfigured))
 	})
 	f.Global.Yes = true
 
@@ -169,10 +171,10 @@ func TestPgIpnSet_EmptyAuthTypeStillTurnsAuthOff(t *testing.T) {
 	assert.Contains(t, string(body), `"auth_type":""`)
 }
 
-func TestPgIpnSet_MasksASecretEchoedRawByThePost(t *testing.T) {
-	f, out, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+func TestPgIPNSet_MasksASecretEchoedRawByThePost(t *testing.T) {
+	f, out := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(pgIpnConfigured))
+			_, _ = w.Write([]byte(pgIPNConfigured))
 			return
 		}
 		_, _ = w.Write([]byte(`{"status":"success","data":{"configured":true,"ipn_url":"https://example.com/pg-ipn","auth_type":"SECRET_KEY","request_content_type":"application/json","secret_key":"SUPERSECRETRAWKEYcdef","active":true}}`))
@@ -183,4 +185,87 @@ func TestPgIpnSet_MasksASecretEchoedRawByThePost(t *testing.T) {
 	require.NoError(t, run(f, "ipn", "set", "https://example.com/pg-ipn"))
 	assert.NotContains(t, out.String(), "SUPERSECRETRAWKEYcdef")
 	assert.Contains(t, out.String(), `"secret_key": "****cdef"`)
+}
+
+func TestPgIPNSet_RefusesAuthFlagsThatCannotWork(t *testing.T) {
+	cases := []struct {
+		name    string
+		current string
+		args    []string
+		want    string
+	}{
+		{"secret with auth off", pgIPNConfigured, []string{"--secret", "s", "--auth-type", ""}, `--secret cannot be used with --auth-type "", which turns auth off`},
+		{"empty secret", pgIPNConfigured, []string{"--secret", ""}, `--secret cannot be empty; pass --auth-type "" to turn auth off`},
+		{"SECRET_KEY with nothing stored", "", []string{"--auth-type", "SECRET_KEY"}, "--auth-type SECRET_KEY needs --secret: no secret is stored yet"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Error("must not write")
+				}
+				if c.current == "" {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"status":"error","error_code":"not_found","message":"no ipn"}`))
+					return
+				}
+				_, _ = w.Write([]byte(c.current))
+			})
+			f.Global.Yes = true
+			err := run(f, append([]string{"ipn", "set", "https://example.com/pg-ipn"}, c.args...)...)
+			require.EqualError(t, err, c.want)
+			assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+		})
+	}
+}
+
+func TestPgIPNSet_FlagMistakesFailBeforeAnyRequest(t *testing.T) {
+	for _, args := range [][]string{{"--secret", ""}, {"--secret", "s", "--auth-type", ""}} {
+		f, _ := apiTestFactory(t, func(_ http.ResponseWriter, r *http.Request) {
+			t.Errorf("a flag mistake must not reach the API: %s %s", r.Method, r.URL.Path)
+		})
+		err := run(f, append([]string{"ipn", "set", "https://example.com/pg-ipn"}, args...)...)
+		require.Error(t, err)
+		assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	}
+}
+
+func TestPgIPNSet_AnUnreadableConfigIsNotCalledEmpty(t *testing.T) {
+	var posted bool
+	f, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"status":"error","error_code":"bad_gateway","message":"upstream"}`))
+			return
+		}
+		posted = true
+		_, _ = w.Write([]byte(pgIPNConfigured))
+	})
+	f.Global.Yes = true
+	require.NoError(t, run(f, "ipn", "set", "https://example.com/pg-ipn", "--auth-type", "SECRET_KEY"))
+	assert.True(t, posted, "with the stored secret unknown, the server decides")
+}
+
+// On a terminal an unread config offers no auth choice: "keep" could not be offered, and turning
+// auth off by mistake is what the choice would risk.
+func TestPgIPNSet_TerminalAsksNoAuthWhenTheReadFails(t *testing.T) {
+	var body []byte
+	f, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"status":"error","message":"upstream"}`))
+			return
+		}
+		body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(pgIPNConfigured))
+	})
+	f.Global.Yes = true
+	prompttest.Use(t, f)
+	require.NoError(t, run(f, "ipn", "set", "https://example.com/pg-ipn"))
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(body, &sent))
+	assert.NotContains(t, sent, "auth_type")
+	assert.NotContains(t, sent, "secret_key")
+	assert.Contains(t, f.IOStreams.ErrOut.(*bytes.Buffer).String(), "could not read the current config")
 }

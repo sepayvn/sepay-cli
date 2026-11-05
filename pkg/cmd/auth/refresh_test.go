@@ -19,7 +19,7 @@ import (
 func TestRefresh_AddsScope(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, out, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdRefresh(f), "--scopes", "webhook:write"))
@@ -32,7 +32,7 @@ func TestRefresh_AddsScope(t *testing.T) {
 func TestRefresh_ResetScopes(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"sandbox", "read"})
+	seedProfile(t, f, "work", []string{"sandbox", "read"})
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdRefresh(f), "--reset-scopes", "--scopes", "read"))
@@ -44,7 +44,7 @@ func TestRefresh_ResetScopes(t *testing.T) {
 func TestRefresh_RemoveScopes(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read", "webhook:write", "va:write"})
+	seedProfile(t, f, "work", []string{"read", "webhook:write", "va:write"})
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdRefresh(f), "--remove-scopes", "va:write"))
@@ -65,7 +65,7 @@ func TestRefresh_NotLoggedIn(t *testing.T) {
 func TestRefresh_RejectsUnknownScope(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "work"
 
 	err := run(NewCmdRefresh(f), "--scopes", "webhook:writ")
@@ -78,7 +78,7 @@ func TestRefresh_RejectsUnknownScope(t *testing.T) {
 func TestRefresh_RejectsClearingEveryScope(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read", "webhook:write"})
+	seedProfile(t, f, "work", []string{"read", "webhook:write"})
 	f.Global.Profile = "work"
 
 	err := run(NewCmdRefresh(f), "--remove-scopes", "read,webhook:write")
@@ -92,7 +92,7 @@ func TestRefresh_RejectsClearingEveryScope(t *testing.T) {
 func TestRefresh_RenewsEmptyGrant(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", nil)
+	seedProfile(t, f, "work", nil)
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdRefresh(f)))
@@ -101,7 +101,7 @@ func TestRefresh_RenewsEmptyGrant(t *testing.T) {
 func TestRefresh_KeepsServerScopeItDoesNotKnow(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read", "future:write"})
+	seedProfile(t, f, "work", []string{"read", "future:write"})
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdRefresh(f)))
@@ -110,7 +110,7 @@ func TestRefresh_KeepsServerScopeItDoesNotKnow(t *testing.T) {
 func TestRefresh_RejectsUnknownRemoveScope(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read", "webhook:write"})
+	seedProfile(t, f, "work", []string{"read", "webhook:write"})
 	f.Global.Profile = "work"
 
 	err := run(NewCmdRefresh(f), "--remove-scopes", "webook:write")
@@ -125,7 +125,7 @@ func TestRefresh_RejectsUnknownRemoveScope(t *testing.T) {
 func TestRefresh_RemovesServerScopeItDoesNotKnow(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read", "future:write"})
+	seedProfile(t, f, "work", []string{"read", "future:write"})
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdRefresh(f), "--remove-scopes", "future:write"))
@@ -138,7 +138,7 @@ func TestRefresh_RemovesServerScopeItDoesNotKnow(t *testing.T) {
 func TestRefresh_UnknownProfileIsUsageError(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "nosuch"
 
 	err := run(NewCmdRefresh(f))
@@ -153,7 +153,7 @@ func TestRefresh_InterruptStopsTheLockWait(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { atomic.AddInt32(&hits, 1) }))
 	t.Cleanup(srv.Close)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "work"
 
 	mgr, err := f.Credentials()

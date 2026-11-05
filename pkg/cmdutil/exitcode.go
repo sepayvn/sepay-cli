@@ -14,7 +14,7 @@ const (
 	ExitForward        ExitCode = 6   // local handler forward failed
 	ExitOTP            ExitCode = 7   // OTP required / invalid
 	ExitBlocked        ExitCode = 8   // blocked by account config or in-app permission
-	ExitInterrupted    ExitCode = 130 // interrupted by Ctrl+C
+	ExitInterrupted    ExitCode = 130 // Ctrl+C or Esc at a prompt, or SIGINT/SIGTERM
 )
 
 // errorCodes name each exit code for machine output.

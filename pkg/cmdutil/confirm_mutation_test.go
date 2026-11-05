@@ -48,7 +48,7 @@ func TestConfirmMutation_ProdHostUnderSandboxLabel(t *testing.T) {
 		IOStreams: ios,
 		Global:    &GlobalOptions{Env: config.EnvSandbox, APIBase: "https://cli-api.sepay.vn/v2"},
 	}
-	f.Config = func() (*config.Config, error) { return config.Load() }
+	f.Config = config.Load
 
 	require.Error(t, f.ConfirmMutation("create webhook", false), "sandbox label + prod host must still confirm")
 

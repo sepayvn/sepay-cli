@@ -35,8 +35,45 @@ func TestFromBuildInfo(t *testing.T) {
 	}
 }
 
-func TestString_DropsTheModuleVersionPrefix(t *testing.T) {
-	defer func(v, d string) { Version, Date = v, d }(Version, Date)
-	Version, Date = "v0.2.0", "unknown"
-	assert.Equal(t, "sepay-cli version 0.2.0", String())
+func stamp(t *testing.T, version, commit, date string) {
+	t.Helper()
+	v, c, d := Version, Commit, Date
+	t.Cleanup(func() { Version, Commit, Date = v, c, d })
+	Version, Commit, Date = version, commit, date
+}
+
+func TestString(t *testing.T) {
+	cases := []struct {
+		name, version, commit, date, want string
+	}{
+		{"goreleaser", "1.2.3", "abc1234", "2026-11-03T04:05:06Z", "sepay version 1.2.3 (abc1234, 2026-11-03)"},
+		{"go install drops the v", "v1.2.3", "none", "unknown", "sepay version 1.2.3"},
+		{"commit without a date", "1.2.3", "abc1234", "unknown", "sepay version 1.2.3 (abc1234)"},
+		{"dev", "dev", "none", "unknown", "sepay version dev"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stamp(t, tc.version, tc.commit, tc.date)
+			assert.Equal(t, tc.want, String())
+		})
+	}
+}
+
+func TestReleaseURL(t *testing.T) {
+	cases := []struct {
+		version, want string
+	}{
+		{"1.2.3", "https://github.com/sepayvn/sepay-cli/releases/tag/v1.2.3"},
+		{"v1.2.3", "https://github.com/sepayvn/sepay-cli/releases/tag/v1.2.3"},
+		{"1.3.0-rc.1", "https://github.com/sepayvn/sepay-cli/releases/tag/v1.3.0-rc.1"},
+		{"1.2.4-SNAPSHOT-abc1234", ""},
+		{"v1.2.4-0.20261105010203-abcdef123456", ""},
+		{"dev", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.version, func(t *testing.T) {
+			stamp(t, tc.version, "none", "unknown")
+			assert.Equal(t, tc.want, ReleaseURL())
+		})
+	}
 }

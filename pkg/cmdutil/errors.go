@@ -13,7 +13,7 @@ import (
 )
 
 // apiErrorMessage maps known API error_codes to English messages.
-var apiErrorMessage = map[string]string{
+var apiErrorMessage = map[string]string{ //nolint:gosec // G101: error messages, no credential
 	"unauthorized":             "session expired, run: sepay login",
 	"insufficient_scope":       "token lacks the required scope, run: sepay auth refresh --scopes <scope>",
 	"rate_limited":             "too many requests, retry shortly",
@@ -30,7 +30,7 @@ var apiErrorMessage = map[string]string{
 	"access_revoked":           "your access to this stream was revoked, run: sepay login",
 	"sse_hub_disabled":         "the listen feature is switched off on SePay's side; it works again once SePay turns it back on",
 	"replay_not_dispatched":    "the replay was not sent",
-	"paycode_prefix_exists":    "this company already has a pay-code structure with that prefix (letter case aside); change it with: sepay paycode set --structure <prefix>",
+	"paycode_prefix_exists":    "this company already has a pay-code structure with that prefix (letter case aside); change it with: sepay paycode update --structure <prefix>",
 	"paycode_version_conflict": "the pay-code configuration changed since it was read; nothing was saved, run the command again (with a new --idempotency-key if you passed one)",
 
 	// Product broker: all answer 500 with one generic message, so only error_code tells the steps apart.
@@ -237,7 +237,7 @@ func ExitCodeForError(err error) ExitCode {
 	return ExitError
 }
 
-// ErrInterrupted reports that the user pressed Ctrl+C.
+// ErrInterrupted reports that the run was stopped: Ctrl+C or Esc at a prompt, or SIGINT/SIGTERM.
 var ErrInterrupted error = interruptedError{}
 
 type interruptedError struct{}
@@ -278,14 +278,18 @@ func HandleError(f *Factory, err error) ExitCode {
 		return renderErrorOutput(jsonfmt.RenderYAML, ios.ErrOut, code, err)
 	}
 
-	// The shell already echoed ^C.
+	// Ctrl+C, Esc or a stop signal: whoever stopped the run asked for it, so nothing is printed.
 	if code == ExitInterrupted {
 		return code
 	}
 	// Errors embed user paths and server strings: sanitise line by line to keep multi-line validation output.
 	fmt.Fprintln(ios.ErrOut, "Error:", cleanKeepingNewlines(formatError(err)))
 	if code == ExitUsage {
-		fmt.Fprintln(ios.ErrOut, "Run 'sepay --help' for usage.")
+		path := f.UsageCommand
+		if path == "" {
+			path = "sepay"
+		}
+		fmt.Fprintf(ios.ErrOut, "Run '%s --help' for usage.\n", path)
 	}
 	return code
 }

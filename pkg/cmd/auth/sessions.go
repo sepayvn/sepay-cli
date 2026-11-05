@@ -15,16 +15,14 @@ import (
 // NewCmdSessions builds "sepay auth sessions".
 func NewCmdSessions(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "sessions",
-		Aliases: []string{"ls"},
-		Short:   "List your OAuth sessions held server-side",
+		Use:   "sessions",
+		Short: "List your OAuth sessions held server-side",
 		Long: `List the OAuth sessions SePay holds for the active profile's account, so you
 can see which id to pass to "sepay auth revoke --token <id>". Token values are
 never shown; the session used for this call is marked with "*".
 
-These are server-side sessions, not the profiles stored on this machine — those
-are "sepay auth status". The "ls" alias belongs to this command for historical
-reasons, so reach for "st" when you meant the local list.`,
+These are server-side sessions, not the profiles stored on this machine; those
+are "sepay auth status" (alias "ls").`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSessions(cmd.Context(), f)
@@ -34,14 +32,13 @@ reasons, so reach for "st" when you meant the local list.`,
 }
 
 func runSessions(ctx context.Context, f *cmdutil.Factory) error {
-
 	host, token, err := f.TokenForProfile("")
 	if err != nil {
 		return err
 	}
 	sessions, err := f.NewOAuthClient(host).ListTokens(ctx, token)
 	if err != nil {
-		return authAPIError(f, "list sessions", err)
+		return authAPIError("list sessions", err)
 	}
 	if sessions == nil {
 		sessions = []auth.TokenSession{} // marshal as [], never null

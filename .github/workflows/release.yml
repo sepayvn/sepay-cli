@@ -26,6 +26,7 @@ jobs:
   release-please:
     if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write # tag + GitHub Release
       pull-requests: write # the release PR
@@ -44,14 +45,23 @@ jobs:
     # release-please is skipped on a tag push, so `needs` alone would skip this job.
     if: ${{ !cancelled() && (needs.release-please.outputs.created == 'true' || github.ref_type == 'tag') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # no build cache by design
+    # This job creates the GitHub Release and pushes the taps, so it sits behind the
+    # same approval as the npm job; with the shared concurrency group one approval
+    # covers the whole chain.
+    environment: release
     permissions:
       contents: write # attach archives to the GitHub Release
-      id-token: write # cosign keyless signing (OIDC)
+      id-token: write # cosign keyless signing and the provenance attestation (OIDC)
+      attestations: write # store the build provenance
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - id: tag
-        run: echo "tag=${{ needs.release-please.outputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+        # Through env, never ${{ }} in the script: a tag name may hold $( ), which the shell runs.
+        env:
+          TAG: ${{ needs.release-please.outputs.tag || github.ref_name }}
+        run: echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       # Git tags are mutable, commit SHAs are not. The tj-actions/changed-files
       # incident (03/2025) was a re-pointed tag. Pin by full SHA; let Dependabot
       # move them, never by hand.
@@ -70,23 +80,38 @@ jobs:
             echo "::error::$TAG points at a commit that is not on main. Merge the change through a PR, then tag a commit of main."
             exit 1
           fi
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          # Pinned to all three digits. "1.26" floats the patch and the runner takes
-          # whatever it has, so one tag could produce two different binaries.
-          go-version: "1.26.10"
+          # The `go` line of go.mod, all three digits: a floating "1.26" lets one
+          # tag produce two different binaries.
+          go-version-file: go.mod
           # The release job must not reuse a build cache any branch can write.
           # A poisoned cache would be signed by cosign and listed in
           # checksums.txt entirely faithfully. 1-2 minutes for a clean chain.
           cache: false
+      # Same check as ci.yml: the release is built by the go.mod version, nothing else.
+      - name: Go matches go.mod
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          want=$(awk '$1 == "go" {print "go" $2}' go.mod)
+          have=$(go env GOVERSION)
+          if [ "$want" = "go" ] || [ "$have" != "$want" ]; then
+            echo "::error::setup-go installed $have, go.mod says $want."
+            exit 1
+          fi
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         with:
           cosign-release: v2.5.2 # .sig + .pem output; npm/build-packages.js verifies that pair
+      # syft writes the SBOMs (.goreleaser.yaml `sboms`).
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.54.0
       # A token for the Homebrew tap and Scoop bucket only; GITHUB_TOKEN cannot write to them.
-      # Minted only when publishing there is switched on and the tag is a final release, so a
-      # prerelease run never holds write access to either repository.
+      # Minted only for a final release of a public repository: a prerelease run never holds write
+      # access to either, and a private repository's downloads would 404 from the cask and manifest.
       - id: tap-token
-        if: ${{ vars.PUBLISH_TAPS == 'true' && !contains(steps.tag.outputs.tag, '-') }}
+        if: ${{ !contains(steps.tag.outputs.tag, '-') && !github.event.repository.private }}
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASER_APP_CLIENT_ID }}
@@ -102,8 +127,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ steps.tag.outputs.tag }}
           TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
-          # Always "true" or "false", so the skip_upload templates in .goreleaser.yaml never meet an unset variable.
-          PUBLISH_TAPS: ${{ vars.PUBLISH_TAPS == 'true' && 'true' || 'false' }}
+          # The release notes name `gh attestation verify` only when the step below runs.
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+
+      # SLSA build provenance: `gh attestation verify <file> -R sepayvn/sepay-cli` proves the
+      # file was built by this workflow from this repository, independently of cosign.
+      # Public repositories only: on the Free, Pro and Team plans GitHub refuses an attestation
+      # from a private one, and the failure would stop the npm job after the GitHub Release exists.
+      - if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sbom.json
+            dist/checksums.txt
+            scripts/install.sh
 
       # Hand dist/ to the npm job. NOT `gh release download`: what Releases serves has
       # no artifacts.json / metadata.json, so the npm job would have to parse filenames
@@ -127,9 +166,10 @@ jobs:
     needs: goreleaser
     if: ${{ !cancelled() && needs.goreleaser.result == 'success' }}
     runs-on: ubuntu-latest # trusted publishing only works on GitHub-hosted runners
-    # Forces a human approval once the repository is public. On a private repository of
-    # the GitHub Free plan the reviewers rule does not apply, so until then the gate is
-    # who can push to main or push a v*-rc.* tag.
+    timeout-minutes: 30 # verify-published alone may wait 10 minutes for the registry
+    # Forces a human approval on a public repository. On a private repository of the
+    # GitHub Free plan the reviewers rule does not apply, so there the gate is who can
+    # push to main or push a v*-rc.* tag.
     environment: release
     permissions:
       contents: read
@@ -143,12 +183,11 @@ jobs:
       NPM_PROVENANCE: ${{ vars.NPM_PROVENANCE }}
       REPO_PRIVATE: ${{ github.event.repository.private }}
     steps:
-      # npm refuses --provenance from a private source repository. While the repository
-      # is private the variable NPM_PROVENANCE stays unset and every release, `latest`
-      # included, publishes WITHOUT provenance (decided for 0.1.0: users get the default
-      # `npm i -g sepay-cli` now; versions published this way never gain provenance).
-      # Once the repository is public this step refuses to publish until
-      # NPM_PROVENANCE=true, so the weaker mode cannot outlive the reason for it.
+      # npm refuses --provenance from a private source repository, so a private repository
+      # keeps NPM_PROVENANCE unset and every release, `latest` included, publishes WITHOUT
+      # provenance; a version published that way never gains it. A public repository
+      # refuses to publish until NPM_PROVENANCE=true, so the weaker mode cannot outlive
+      # the reason for it.
       # Fails in seconds, before anything is built or published.
       - name: provenance must match the repository visibility
         run: |
@@ -249,7 +288,7 @@ jobs:
       # published last at step 6.
       - name: publish the 6 platform packages
         run: |
-          for d in dist/npm/cli-*/; do (cd "$d" && npm publish --access public $PROVENANCE --tag "$DIST_TAG"); done
+          for d in dist/npm/cli-*/; do (cd "$d" && npm publish --access public ${PROVENANCE:+"$PROVENANCE"} --tag "$DIST_TAG"); done
 
       # Step 4 — THE MOST IMPORTANT GATE. Pull the 6 packages back FROM THE REGISTRY (not
       # from the local dist/), re-hash the binary inside each, and compare against the
@@ -274,4 +313,4 @@ jobs:
       # Step 6 — THE RELEASE ACTION. One command, and the last one: from this second
       # `npx sepay-cli@<dist-tag>` points at the new version.
       - name: publish the wrapper
-        run: cd dist/npm/sepay && npm publish --access public $PROVENANCE --tag "$DIST_TAG"
+        run: cd dist/npm/sepay && npm publish --access public ${PROVENANCE:+"$PROVENANCE"} --tag "$DIST_TAG"

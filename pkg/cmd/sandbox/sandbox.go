@@ -11,7 +11,7 @@ import (
 
 	"github.com/sepayvn/sepay-cli/internal/api"
 	"github.com/sepayvn/sepay-cli/internal/config"
-	bankaccount "github.com/sepayvn/sepay-cli/pkg/cmd/bank-account"
+	"github.com/sepayvn/sepay-cli/pkg/cmd/bankaccount"
 	vapkg "github.com/sepayvn/sepay-cli/pkg/cmd/va"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 
@@ -60,6 +60,13 @@ func NewCmdSandbox(f *cmdutil.Factory) *cobra.Command {
 		Use:     "sandbox <command>",
 		Aliases: []string{"sbx"},
 		Short:   "Sandbox-only utilities (simulate, init, seed, reset)",
+		Long: `The sandbox is a separate test environment with its own data and no real money;
+it is the default --env. These commands refuse every other environment.
+
+"sandbox init" provisions a bank account, an optional VA and webhook, and sample
+transactions in one go. "sandbox simulate" fires a canned transaction at your
+webhooks, "sandbox seed" adds sample transactions and "sandbox reset" clears
+webhooks and bank accounts.`,
 		PersistentPreRunE: func(*cobra.Command, []string) error {
 			return EnsureSandboxEnv(f)
 		},
@@ -87,7 +94,15 @@ func newSimulateCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "simulate [event]",
 		Short: "Fire a canned sandbox transaction",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Fire a canned sandbox transaction on a bank account, as if the bank had reported
+it, so your webhooks and "sepay webhook listen" receive it.
+
+The event is payment_in, payment_out or va_credit, given as [event] or --event;
+va_credit also needs --va, the VA number. Event, bank account and amount are
+prompted for on a terminal; required otherwise.`,
+		Example: `  sepay sandbox simulate payment_in --bank-account <bank-account-xid> --amount 50000
+  sepay sandbox simulate va_credit --bank-account <bank-account-xid> --va <va-number> --amount 50000`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(code) > maxCodeLen {
 				return &cmdutil.FlagError{Err: fmt.Errorf("--code must be at most %d characters", maxCodeLen)}
@@ -103,6 +118,14 @@ func newSimulateCmd(f *cmdutil.Factory) *cobra.Command {
 			}
 			if !slices.Contains(eventTypes, event) {
 				return &cmdutil.FlagError{Err: fmt.Errorf("event must be one of: %s", strings.Join(eventTypes, ", "))}
+			}
+			if vaNumber != "" && event != "va_credit" {
+				return &cmdutil.FlagError{Err: fmt.Errorf("--va applies to va_credit only, not %s", event)}
+			}
+			if cmd.Flags().Changed("amount") {
+				if err := CheckAmount(amount); err != nil {
+					return err
+				}
 			}
 			baXID, err := bankaccount.PickOne(cmd.Context(), f, bankAccount, "bank-account", "Bank account")
 			if err != nil {
@@ -135,7 +158,7 @@ func newSimulateCmd(f *cmdutil.Factory) *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&eventFlag, "event", "", "Event type (or pass as the positional arg): "+strings.Join(eventTypes, ", "))
 	fl.Int64Var(&amount, "amount", 0, "Amount in VND (required)")
-	fl.StringVar(&code, "code", "", fmt.Sprintf("Payment code (max %d chars)", maxCodeLen))
+	fl.StringVar(&code, "code", "", fmt.Sprintf("Pay code (max %d chars)", maxCodeLen))
 	fl.StringVar(&bankAccount, "bank-account", "", "Bank account xid (required)")
 	fl.StringVar(&vaNumber, "va", "", "Virtual account number (required for va_credit)")
 	fl.StringArrayVar(&overridePairs, "override", nil, "Override a payload field, key=val (repeatable; only 'content')")
@@ -160,7 +183,6 @@ type SimulateResult struct {
 }
 
 func runSimulate(ctx context.Context, f *cmdutil.Factory, body SimulateBody) error {
-
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return err
@@ -195,10 +217,21 @@ func ResolveAmount(f *cmdutil.Factory, amount int64, given bool) (int64, error) 
 			return 0, &cmdutil.FlagError{Err: fmt.Errorf("--amount must be an integer")}
 		}
 	}
-	if n <= 0 {
-		return 0, &cmdutil.FlagError{Err: fmt.Errorf("--amount must be greater than 0")}
+	return n, CheckAmount(n)
+}
+
+// Simulated amounts the server accepts, in VND.
+const (
+	simulateAmountMin = 1000
+	simulateAmountMax = 499_000_000
+)
+
+// CheckAmount refuses an amount the simulate endpoint rejects.
+func CheckAmount(n int64) error {
+	if n < simulateAmountMin || n > simulateAmountMax {
+		return &cmdutil.FlagError{Err: fmt.Errorf("--amount must be between %d and %d", simulateAmountMin, simulateAmountMax)}
 	}
-	return n, nil
+	return nil
 }
 
 func parseOverrides(pairs []string) (map[string]string, error) {
@@ -233,6 +266,11 @@ consumes.
 
 On a terminal, whatever you leave off the command line is asked for. Pass every
 flag, or --yes, to take the defaults and run without questions.`,
+		Example: `  # bank account, VA, a webhook for "webhook listen" and 10 sample transactions
+  sepay sandbox init --with-va --with-webhook-listen --seed 10 --yes
+
+  # a starter account whose webhook posts to your server
+  sepay sandbox init --with-webhook https://example.com/hook --yes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Validate before the first write, or a late rejection leaves a half-provisioned sandbox.
@@ -247,14 +285,27 @@ flag, or --yes, to take the defaults and run without questions.`,
 					return err
 				}
 			}
+			if cmd.Flags().Changed("bank") {
+				var err error
+				if opts.bank, err = bankaccount.CheckBankCode(cmd.Context(), f, opts.bank); err != nil {
+					return err
+				}
+			}
 			if err := promptInit(cmd.Context(), f, cmd, &opts); err != nil {
 				return err
+			}
+			// The supported codes differ by deployment, so the default comes from the server's list.
+			if opts.bank == "" {
+				var err error
+				if opts.bank, err = bankaccount.DefaultBankCode(cmd.Context(), f); err != nil {
+					return err
+				}
 			}
 			return runInit(cmd.Context(), f, opts)
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringVar(&opts.bank, "bank", "ACB", "Bank code for the starter account")
+	fl.StringVar(&opts.bank, "bank", "", "Bank code for the starter account (default ACB when the server offers it, else its first bank)")
 	fl.BoolVar(&opts.withVA, "with-va", false, "Also issue a virtual account")
 	fl.StringVar(&opts.webhook, "with-webhook", "", "Also create a webhook to this URL")
 	fl.BoolVar(&opts.webhookListen, "with-webhook-listen", false, `Also create a webhook with no URL, for "sepay webhook listen"`)
@@ -282,8 +333,7 @@ func promptInit(ctx context.Context, f *cmdutil.Factory, cmd *cobra.Command, opt
 	fl := cmd.Flags()
 	var err error
 
-	if !fl.Changed("bank") {
-		// Pass "" so the flag default does not skip the picker.
+	if opts.bank == "" {
 		if opts.bank, err = bankaccount.PickBankCode(ctx, f, ""); err != nil {
 			return err
 		}
@@ -535,7 +585,6 @@ func newSeedCmd(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runSeed(ctx context.Context, f *cmdutil.Factory, baXID string, count int) error {
-
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return err

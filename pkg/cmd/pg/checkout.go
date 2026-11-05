@@ -70,7 +70,7 @@ func preflightPaymentMethods(ctx context.Context, client *pg.Client, want string
 	if len(usable) == 0 {
 		return errors.New("this sandbox merchant has no active payment method, so checkout would fail " +
 			"with an error page that carries no reason\n" +
-			"enable one in the SePay portal under Payment Gateway \u2192 Payment methods, then check with: sepay pg merchant show")
+			"enable one in the SePay portal under Payment Gateway \u2192 Payment methods, then check with: sepay pg merchant get")
 	}
 	// Not a FlagError: the value is valid, the merchant just cannot serve it.
 	if want != "" && !slices.Contains(usable, want) {
@@ -83,7 +83,7 @@ func preflightPaymentMethods(ctx context.Context, client *pg.Client, want string
 func newCheckoutCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "checkout <command>",
-		Short: "Create a hosted checkout session",
+		Short: "Hosted checkout sessions",
 	}
 	cmd.AddCommand(newCheckoutInitCmd(f))
 	return cmd
@@ -94,11 +94,15 @@ func newCheckoutInitCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Start a checkout and return its payment page URL",
-		Args:  cmdutil.NoArgs,
+		Example: `  sepay pg checkout init --invoice DH1001 --amount 150000 --description "Order 1001"
+
+  # print the payment page URL instead of opening a browser
+  sepay pg checkout init --invoice DH1002 --amount 99000 --description "Order 1002" --no-open`,
+		Args: cmdutil.NoArgs,
 		Long: "POST a signed checkout/init and return the hosted payment page URL.\n" +
 			"On a TTY the URL opens in your browser; otherwise it is printed. Payment\n" +
 			"itself completes on the hosted page in a browser — the CLI only hands off the URL.",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runCheckoutInit(cmd.Context(), f, opts)
 		},
 	}
@@ -114,6 +118,7 @@ func newCheckoutInitCmd(f *cmdutil.Factory) *cobra.Command {
 	fl.StringVar(&opts.cancelURL, "cancel-url", "", "Redirect URL on cancel")
 	fl.StringVar(&opts.customer, "customer", "", "Customer id")
 	fl.BoolVar(&opts.noOpen, "no-open", false, "Print the URL without opening a browser")
+	cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnHost: cmdutil.HostPGCheckout})
 	return cmdutil.MarkRequired(cmd, "amount", "description")
 }
 
@@ -203,7 +208,7 @@ func validateCheckoutFlags(opts *checkoutOptions) error {
 		{"error-url", opts.errorURL},
 		{"cancel-url", opts.cancelURL},
 	} {
-		if err := validateRedirectURL(u.flag, u.value); err != nil {
+		if err := cmdutil.ValidateRedirectURL(u.flag, u.value); err != nil {
 			return err
 		}
 	}
@@ -222,25 +227,6 @@ func validateCheckoutInvoice(opts *checkoutOptions) error {
 	}
 	if !invoiceNumberPattern.MatchString(opts.invoice) {
 		return &cmdutil.FlagError{Err: fmt.Errorf("--invoice may contain only letters, digits, %q and %q, got %q", "-", "_", opts.invoice)}
-	}
-	return nil
-}
-
-// validateRedirectURL mirrors the server's valid_redirect_url scheme check.
-func validateRedirectURL(flag, value string) error {
-	if value == "" {
-		return nil
-	}
-	if len(value) > 2048 || strings.ContainsAny(value, " \t\r\n") {
-		return &cmdutil.FlagError{Err: fmt.Errorf("--%s must be at most 2048 characters and contain no whitespace", flag)}
-	}
-	scheme, _, found := strings.Cut(value, ":")
-	if !found || scheme == "" {
-		return &cmdutil.FlagError{Err: fmt.Errorf("--%s must include a scheme, e.g. https://example.com/done, got %q", flag, value)}
-	}
-	blocked := []string{"javascript", "data", "vbscript", "file", "blob", "about"}
-	if slices.Contains(blocked, strings.ToLower(scheme)) {
-		return &cmdutil.FlagError{Err: fmt.Errorf("--%s scheme %q is not allowed", flag, scheme)}
 	}
 	return nil
 }

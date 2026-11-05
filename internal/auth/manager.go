@@ -89,7 +89,7 @@ func (m *Manager) store(profile, host string, from, cred *Credential, scopes []s
 			_ = m.keyring.delete(keyFor(profile, host))
 		} else if kerr := m.keyring.set(keyFor(profile, host), cred); kerr != nil {
 			// Fail closed: returning aborts the update, so hosts.yml keeps its previous content.
-			return fmt.Errorf("%w (%v); %s", ErrKeychainUnavailable, kerr, keychainHint)
+			return fmt.Errorf("%w (%v); %s", ErrKeychainUnavailable, kerr, keychainHint) //nolint:errorlint // %v: only the sentinel is matched; the cause stays out of errors.Is/As
 		}
 
 		p := h.Profiles[profile]

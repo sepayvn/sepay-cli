@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
@@ -73,17 +74,42 @@ func TestApiBaseURL_Precedence(t *testing.T) {
 	assert.Equal(t, "--api-base", src)
 }
 
+func TestPrintEnvBanner(t *testing.T) {
+	tests := []struct {
+		name   string
+		env    string
+		source string
+		want   string
+	}{
+		{"default host", "sandbox", "default", "env: sandbox\n"},
+		{"production default", "production", "default", "env: production\n"},
+		{"env var override", "sandbox", "SEPAY_SANDBOX_API_URL", "env: sandbox · host from SEPAY_SANDBOX_API_URL\n"},
+		{"flag override", "production", "--api-base", "env: production · host from --api-base\n"},
+		{"config override", "sandbox", "config", "env: sandbox · host from config\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ios, _, _, errOut := iostreams.Test()
+			f := &Factory{IOStreams: ios, Global: &GlobalOptions{Output: "table"}}
+			f.printEnvBanner(ios.ErrOut, tt.env, tt.source, "")
+			assert.Equal(t, tt.want, errOut.String())
+		})
+	}
+}
+
 func TestPrintEnvBanner_OncePerRunAndSuppressed(t *testing.T) {
 	ios, _, _, errOut := iostreams.Test()
 	f := &Factory{IOStreams: ios, Global: &GlobalOptions{Output: "table"}}
-	f.printEnvBanner("sandbox", "http://h/v2", "config")
-	f.printEnvBanner("sandbox", "http://h/v2", "config")
+	f.printEnvBanner(ios.ErrOut, "sandbox", "config", "")
+	f.printEnvBanner(ios.ErrOut, "sandbox", "config", "")
 	assert.Equal(t, 1, strings.Count(errOut.String(), "env: sandbox"), "banner prints once per run")
 
-	ios2, _, _, err2 := iostreams.Test()
-	f2 := &Factory{IOStreams: ios2, Global: &GlobalOptions{Output: "json"}}
-	f2.printEnvBanner("sandbox", "http://h/v2", "config")
-	assert.Empty(t, err2.String(), "banner suppressed for machine output")
+	for _, g := range []*GlobalOptions{{Output: "json"}, {Output: "yaml"}, {Output: "table", Quiet: true}} {
+		ios2, _, _, err2 := iostreams.Test()
+		f2 := &Factory{IOStreams: ios2, Global: g}
+		f2.printEnvBanner(ios2.ErrOut, "sandbox", "config", "")
+		assert.Empty(t, err2.String(), "banner suppressed for %+v", *g)
+	}
 }
 
 func seedExpired(t *testing.T, dir string) {
@@ -154,13 +180,15 @@ func TestResolveToken_ConcurrentRefreshSpendsTokenOnce(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got := make([]string, 2)
+	// Built before the goroutines: factoryFor resets the shared keyring mock.
+	factories := []*Factory{factoryFor(dir, srv.URL), factoryFor(dir, srv.URL)}
+	got := make([]string, len(factories))
 	var wg sync.WaitGroup
-	for i := range got {
+	for i, f := range factories {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			got[i] = factoryFor(dir, srv.URL).resolveToken()
+			got[i] = f.resolveToken()
 		}()
 	}
 	wg.Wait()
@@ -269,7 +297,10 @@ func TestResolveToken_LateRefreshDoesNotReplaceAReusedLabel(t *testing.T) {
 			return
 		}
 		h, err := config.LoadHostsFrom(dir)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		h.Profiles["work"] = &config.Profile{
 			Host:         "my.sepay.vn",
 			Insecure:     true,
@@ -278,7 +309,7 @@ func TestResolveToken_LateRefreshDoesNotReplaceAReusedLabel(t *testing.T) {
 			ExpiresAt:    time.Now().Add(time.Hour).Format(time.RFC3339),
 			Scopes:       []string{"sandbox"},
 		}
-		require.NoError(t, h.Save())
+		assert.NoError(t, h.Save())
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"access_token":"stale_at","refresh_token":"stale_rt","expires_in":3600,"scope":"sandbox"}`)
@@ -305,10 +336,13 @@ func TestResolveToken_LateRefreshDoesNotUndoALogout(t *testing.T) {
 			return
 		}
 		h, err := config.LoadHostsFrom(dir)
-		require.NoError(t, err)
+		if !assert.NoError(t, err) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		delete(h.Profiles, "work")
 		h.Active = ""
-		require.NoError(t, h.Save())
+		assert.NoError(t, h.Save())
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"access_token":"stale_at","refresh_token":"stale_rt","expires_in":3600,"scope":"sandbox"}`)
@@ -396,6 +430,12 @@ func TestResolveToken_StaleRefreshIsReportedOnlyWhenTheHostWasNotReached(t *test
 }
 
 func TestResolveToken_StoreFailureIsNotReportedAsUnreachable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a read-only directory does not stop file creation on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory")
+	}
 	dir := t.TempDir()
 	seedExpired(t, dir)
 
@@ -460,31 +500,31 @@ func TestPgCheckoutURL_Precedence(t *testing.T) {
 	f := &Factory{IOStreams: ios, Global: &GlobalOptions{}}
 
 	f.Global.Env = "sandbox"
-	_, url, src := f.pgCheckoutURL(cfg)
+	url, src := f.pgCheckoutURL(cfg)
 	assert.Equal(t, "https://pay-sandbox.sepay.vn", url)
 	assert.Equal(t, "default", src)
 	_, apiURL, _ := f.pgBaseURL(cfg)
 	assert.NotEqual(t, apiURL, url, "checkout and REST API are different hosts")
 
 	f.Global.Env = "production"
-	_, prod, _ := f.pgCheckoutURL(cfg)
+	prod, _ := f.pgCheckoutURL(cfg)
 	assert.Equal(t, "https://pay.sepay.vn", prod)
 
 	f.Global.Env = "sandbox"
 	cfg.Set("sandbox.pg_checkout_url", "http://localhost:8079")
-	_, url, src = f.pgCheckoutURL(cfg)
+	url, src = f.pgCheckoutURL(cfg)
 	assert.Equal(t, "http://localhost:8079", url)
 	assert.Equal(t, "config", src)
 
 	t.Setenv("SEPAY_SANDBOX_PG_CHECKOUT_URL", "http://localhost:9999")
-	_, url, src = f.pgCheckoutURL(cfg)
+	url, src = f.pgCheckoutURL(cfg)
 	assert.Equal(t, "http://localhost:9999", url)
 	assert.Equal(t, "SEPAY_SANDBOX_PG_CHECKOUT_URL", src)
 
 	t.Setenv("SEPAY_SANDBOX_PG_CHECKOUT_URL", "")
 	cfg.Set("sandbox.pg_checkout_url", "")
 	t.Setenv("SEPAY_SANDBOX_PG_API_URL", "http://localhost:7777")
-	_, url, src = f.pgCheckoutURL(cfg)
+	url, src = f.pgCheckoutURL(cfg)
 	assert.Equal(t, "https://pay-sandbox.sepay.vn", url, "a custom REST API host must not redirect checkout/init")
 	assert.Equal(t, "default", src)
 }
@@ -524,7 +564,7 @@ func TestRenewRejectedToken_UsesTheTokenAPeerStored(t *testing.T) {
 	dir := t.TempDir()
 	seedLive(t, dir)
 	var exchanges int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { exchanges++ }))
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { exchanges++ }))
 	defer srv.Close()
 
 	f := factoryFor(dir, srv.URL)
@@ -603,4 +643,202 @@ func TestRefreshIfExpired_InterruptStopsTheLockWait(t *testing.T) {
 	assert.Equal(t, "old_at", token, "the stored token is used; the caller's request then stops on the same Ctrl-C")
 	assert.Less(t, time.Since(start), 2*time.Second, "the wait must not run out the 30s refresh budget")
 	assert.Zero(t, atomic.LoadInt32(&hits), "no refresh token is spent after Ctrl-C")
+}
+
+// A product client mints its credential at the API host with the CLI token, so the banner names an
+// overridden API host too, not only the product's own.
+func TestProductBanner_NamesAnOverriddenAPIHost(t *testing.T) {
+	builders := map[string]func(*Factory) error{
+		"bankhub":  func(f *Factory) error { _, err := f.NewBankHubClient(); return err },
+		"pg":       func(f *Factory) error { _, err := f.NewPGClient(); return err },
+		"einvoice": func(f *Factory) error { _, err := f.NewEInvoiceClient(); return err },
+	}
+	for name, build := range builders {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
+			t.Setenv("SEPAY_SANDBOX_API_URL", "http://127.0.0.1:9000/v2")
+			f := New()
+			ios, _, _, errOut := iostreams.Test()
+			f.IOStreams = ios
+			f.Global.Output = "table"
+			_ = build(f)
+			assert.Equal(t, "env: sandbox · API host from SEPAY_SANDBOX_API_URL\n", errOut.String())
+		})
+	}
+}
+
+// --api-base looks like it sends the whole command there; a product command only mints there, so the
+// banner says where its own requests still go.
+func TestProductBanner_APIBaseNotesTheProductHostIsUnmoved(t *testing.T) {
+	builders := []struct {
+		name  string
+		key   string
+		build func(*Factory) error
+	}{
+		{"bankhub", "BANKHUB_API_URL", func(f *Factory) error { _, err := f.NewBankHubClient(); return err }},
+		{"pg", "PG_API_URL", func(f *Factory) error { _, err := f.NewPGClient(); return err }},
+		{"einvoice", "EINVOICE_API_URL", func(f *Factory) error { _, err := f.NewEInvoiceClient(); return err }},
+	}
+	for _, b := range builders {
+		t.Run(b.name, func(t *testing.T) {
+			t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
+			t.Setenv("SEPAY_SANDBOX_"+b.key, "")
+			f := New()
+			ios, _, _, errOut := iostreams.Test()
+			f.IOStreams = ios
+			f.Global.Output = "table"
+			f.Global.APIBase = "http://127.0.0.1:38799/v2"
+			_ = b.build(f)
+			assert.Equal(t, "env: sandbox · API host from --api-base\n"+
+				"note: --api-base moves only the API host; this command still calls its default host (set SEPAY_SANDBOX_"+b.key+" to move it)\n",
+				errOut.String())
+		})
+		t.Run(b.name+" with its own host moved", func(t *testing.T) {
+			t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
+			t.Setenv("SEPAY_SANDBOX_"+b.key, "http://127.0.0.1:38800")
+			f := New()
+			ios, _, _, errOut := iostreams.Test()
+			f.IOStreams = ios
+			f.Global.Output = "table"
+			f.Global.APIBase = "http://127.0.0.1:38799/v2"
+			_ = b.build(f)
+			assert.Equal(t, "env: sandbox · host from SEPAY_SANDBOX_"+b.key+" · API host from --api-base\n", errOut.String())
+		})
+	}
+}
+
+// checkout init posts to the hosted-checkout host as well as the PG API host, so the banner names
+// where each came from and the --api-base note lists the variable of each one still on its default.
+func TestProductBanner_CheckoutInitNamesTheCheckoutHost(t *testing.T) {
+	tests := []struct {
+		name, pgAPI, checkout, want string
+	}{
+		{
+			"both default", "", "",
+			"env: sandbox · API host from --api-base\n" +
+				"note: --api-base moves only the API host; this command still calls its default host and checkout host " +
+				"(set SEPAY_SANDBOX_PG_API_URL and SEPAY_SANDBOX_PG_CHECKOUT_URL to move them)\n",
+		},
+		{
+			"PG API host moved", "http://127.0.0.1:38800", "",
+			"env: sandbox · host from SEPAY_SANDBOX_PG_API_URL · API host from --api-base\n" +
+				"note: --api-base moves only the API host; this command still calls its default checkout host " +
+				"(set SEPAY_SANDBOX_PG_CHECKOUT_URL to move it)\n",
+		},
+		{
+			"both moved", "http://127.0.0.1:38800", "http://127.0.0.1:38801",
+			"env: sandbox · host from SEPAY_SANDBOX_PG_API_URL · checkout host from SEPAY_SANDBOX_PG_CHECKOUT_URL · API host from --api-base\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
+			t.Setenv("SEPAY_SANDBOX_PG_API_URL", tt.pgAPI)
+			t.Setenv("SEPAY_SANDBOX_PG_CHECKOUT_URL", tt.checkout)
+			f := New()
+			ios, _, _, errOut := iostreams.Test()
+			f.IOStreams = ios
+			f.Global.Output = "table"
+			f.Global.APIBase = "http://127.0.0.1:38799/v2"
+			root := &cobra.Command{Use: "sepay"}
+			pgCmd := &cobra.Command{Use: "pg"}
+			checkout := &cobra.Command{Use: "checkout"}
+			initCmd := Annotate(&cobra.Command{Use: "init"}, map[string]string{AnnHost: HostPGCheckout})
+			root.AddCommand(pgCmd)
+			pgCmd.AddCommand(checkout)
+			checkout.AddCommand(initCmd)
+			f.BindCommand(initCmd)
+
+			_, _ = f.NewPGClient()
+			assert.Equal(t, tt.want, errOut.String())
+		})
+	}
+}
+
+// Every client builder routes its progress notes through progressf, so the gate cannot be bypassed by
+// one builder keeping its own writer.
+func TestClientBuilders_RouteProgressThroughTheGate(t *testing.T) {
+	builders := map[string]func(*Factory) (func(string, ...any), error){
+		"api": func(f *Factory) (func(string, ...any), error) {
+			c, err := f.NewAPIClient()
+			if err != nil {
+				return nil, err
+			}
+			return c.Logf, nil
+		},
+		"bankhub": func(f *Factory) (func(string, ...any), error) {
+			c, err := f.NewBankHubClient()
+			if err != nil {
+				return nil, err
+			}
+			return c.Logf, nil
+		},
+		"pg": func(f *Factory) (func(string, ...any), error) {
+			c, err := f.NewPGClient()
+			if err != nil {
+				return nil, err
+			}
+			return c.Logf, nil
+		},
+		"einvoice": func(f *Factory) (func(string, ...any), error) {
+			c, err := f.NewEInvoiceClient()
+			if err != nil {
+				return nil, err
+			}
+			return c.Logf, nil
+		},
+	}
+	for name, build := range builders {
+		for _, output := range []string{"table", "json"} {
+			t.Run(name+" "+output, func(t *testing.T) {
+				dir := t.TempDir()
+				t.Setenv("SEPAY_CONFIG_DIR", dir)
+				keyring.MockInit()
+				h, err := config.LoadHostsFrom(dir)
+				require.NoError(t, err)
+				h.Active = "work"
+				h.Profiles["work"] = &config.Profile{
+					Host: "my.sepay.vn", Insecure: true, OAuthToken: "at", RefreshToken: "rt",
+					ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339), Scopes: []string{"sandbox"},
+				}
+				require.NoError(t, h.Save())
+				f := New()
+				ios, _, _, errOut := iostreams.Test()
+				f.IOStreams = ios
+				f.Global.Output = output
+				f.Global.Quiet = true // keeps the env banner out of errOut
+				logf, err := build(f)
+				require.NoError(t, err)
+				f.Global.Quiet = false
+				logf("Rate limited (429).")
+				if output == "table" {
+					assert.Equal(t, "Rate limited (429).\n", errOut.String())
+				} else {
+					assert.Empty(t, errOut.String())
+				}
+			})
+		}
+	}
+}
+
+// A 429 or network retry note must not precede the error object machine output parses off stderr.
+func TestProgressf_SilentUnderMachineOutputAndQuietUnlessVerbose(t *testing.T) {
+	cases := []struct {
+		g    GlobalOptions
+		want string
+	}{
+		{GlobalOptions{Output: "table"}, "Rate limited (429).\n"},
+		{GlobalOptions{Output: "table", Quiet: true}, ""},
+		{GlobalOptions{Output: "json"}, ""},
+		{GlobalOptions{Output: "yaml"}, ""},
+		{GlobalOptions{Output: "json", Verbose: true}, "Rate limited (429).\n"},
+		{GlobalOptions{Output: "table", Quiet: true, Verbose: true}, "Rate limited (429).\n"},
+	}
+	for _, c := range cases {
+		ios, _, out, errOut := iostreams.Test()
+		f := &Factory{IOStreams: ios, Global: &c.g}
+		f.progressf("Rate limited (%d).", 429)
+		assert.Equal(t, c.want, errOut.String(), "%+v", c.g)
+		assert.Empty(t, out.String())
+	}
 }

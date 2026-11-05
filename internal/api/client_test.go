@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +27,28 @@ func TestReadBody_ReadErrorNotSwallowed(t *testing.T) {
 	var te *TransportError
 	require.ErrorAs(t, err, &te)
 	assert.Equal(t, "the connection to SePay was cut off", te.Reason())
+}
+
+// The server answered, only too much: a resend would fetch the same body, and the
+// failure is not the network's.
+func TestGet_OversizedResponseIsNotRetried(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), MaxResponseBytes+1))
+	}))
+	defer srv.Close()
+
+	var logged []string
+	c := NewClient(srv.URL, "tok")
+	c.MaxRetries = 3
+	c.Logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	_, err := c.Get(context.Background(), "/transactions", nil)
+	require.ErrorIs(t, err, ErrResponseTooLarge)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls))
+	for _, line := range logged {
+		assert.NotContains(t, line, "cannot reach")
+	}
 }
 
 func TestPost_SendsBodyAndIdempotencyKey(t *testing.T) {

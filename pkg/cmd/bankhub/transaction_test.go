@@ -78,7 +78,20 @@ func TestTransactionGet_EmptyIDIsAUsageError(t *testing.T) {
 
 	err := run(f, "transaction", "get", "")
 	require.Error(t, err)
-	assert.EqualError(t, err, "a transaction id is required")
+	require.EqualError(t, err, "a transaction id is required")
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 	assert.False(t, called, "no request may leave the machine")
+}
+
+func TestTransactionList_ReversedRangeFailsBeforeAnyRequest(t *testing.T) {
+	called := false
+	record := func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		_, _ = w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}
+	f, _, _ := testFactory(t, record, record)
+	err := run(f, "transaction", "list", "--from", "2026-07-10", "--to", "2026-07-01")
+	require.Error(t, err)
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.False(t, called, "a reversed range would return an empty list, not an error")
 }

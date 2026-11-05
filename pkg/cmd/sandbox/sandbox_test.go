@@ -19,9 +19,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const banksJSON = `{"status":"success","data":[{"code":"ACB","short_name":"ACB"},{"code":"BIDV","short_name":"BIDV"}]}`
+
 func testFactory(t *testing.T, h http.HandlerFunc) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	srv := httptest.NewServer(h)
+	return bankListFactory(t, banksJSON, h)
+}
+
+// bankListFactory is testFactory serving banks as the supported bank list.
+func bankListFactory(t *testing.T, banks string, h http.HandlerFunc) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The bank list a --bank code is checked against and the default comes from.
+		if r.Method == http.MethodGet && r.URL.Path == "/banks" {
+			_, _ = w.Write([]byte(banks))
+			return
+		}
+		h(w, r)
+	}))
 	t.Cleanup(srv.Close)
 	ios, _, out, errOut := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: ios, Global: &cmdutil.GlobalOptions{Output: "table"}}
@@ -72,7 +87,7 @@ func TestSimulate_RejectsBadInput(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-				t.Error("must not call the server on invalid input")
+				assert.Fail(t, "must not call the server on invalid input")
 			})
 			err := run(NewCmdSandbox(f), tt.args...)
 			require.Error(t, err)
@@ -132,7 +147,7 @@ func TestSimulate_VaCreditSendsVaNumber(t *testing.T) {
 
 func TestSimulate_MissingRequiredNonInteractive(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not reach the server when a required input is missing")
+		assert.Fail(t, "must not reach the server when a required input is missing")
 	})
 	err := run(NewCmdSandbox(f), "simulate", "payment_in", "--amount", "1000")
 	require.Error(t, err)
@@ -147,13 +162,16 @@ func TestSimulate_BadAmount(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"explicit zero", []string{"--bank-account", "ba_1", "--amount", "0"}, "--amount must be greater than 0"},
+		{"explicit zero", []string{"--bank-account", "ba_1", "--amount", "0"}, "--amount must be between 1000 and 499000000"},
+		{"below the minimum", []string{"--bank-account", "ba_1", "--amount", "999"}, "--amount must be between 1000 and 499000000"},
+		{"above the maximum", []string{"--bank-account", "ba_1", "--amount", "499000001"}, "--amount must be between 1000 and 499000000"},
+		{"va on another event", []string{"--bank-account", "ba_1", "--amount", "5000", "--va", "SB1"}, "--va applies to va_credit only, not payment_in"},
 		{"omitted", []string{"--bank-account", "ba_1"}, "--amount is required"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-				t.Error("must not reach the server with an unusable amount")
+				assert.Fail(t, "must not reach the server with an unusable amount")
 			})
 			err := run(NewCmdSandbox(f), append([]string{"simulate", "payment_in"}, tt.args...)...)
 			require.Error(t, err)
@@ -198,7 +216,7 @@ func TestSeed_CreatesCount(t *testing.T) {
 
 func TestSeed_MissingBankAccountNonInteractive(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not call the server without a bank account")
+		assert.Fail(t, "must not call the server without a bank account")
 	})
 	err := run(NewCmdSandbox(f), "seed", "--count", "2")
 	require.Error(t, err)
@@ -207,7 +225,7 @@ func TestSeed_MissingBankAccountNonInteractive(t *testing.T) {
 
 func TestSimulate_BadOverride(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not reach the server with a malformed override")
+		assert.Fail(t, "must not reach the server with a malformed override")
 	})
 	err := run(NewCmdSandbox(f), "simulate", "payment_in",
 		"--bank-account", "ba_1", "--amount", "1000", "--override", "noequals")
@@ -237,7 +255,7 @@ func TestInit_Full(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"status":"success","data":{"xid":"tx"}}`))
 		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			assert.Failf(t, "unexpected request", "unexpected %s %s", r.Method, r.URL.Path)
 		}
 	})
 	require.NoError(t, run(NewCmdSandbox(f), "init", "--bank", "ACB", "--with-va", "--with-webhook", "https://x.test", "--seed", "2"))
@@ -254,7 +272,7 @@ func TestInit_Minimal(t *testing.T) {
 			atomic.AddInt32(&simCount, 1)
 		}
 		if r.URL.Path != "/bank-accounts" {
-			t.Errorf("unexpected call %s (minimal init should only create a bank account)", r.URL.Path)
+			assert.Failf(t, "unexpected request", "unexpected call %s (minimal init should only create a bank account)", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"status":"success","data":{"id":"ba_1"}}`))
@@ -281,7 +299,7 @@ func TestInit_ValidatesBeforeProvisioning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f, _, _ := testFactory(t, func(_ http.ResponseWriter, r *http.Request) {
-				t.Errorf("provisioned %s %s before the inputs were validated", r.Method, r.URL.Path)
+				assert.Failf(t, "unexpected request", "provisioned %s %s before the inputs were validated", r.Method, r.URL.Path)
 			})
 			err := run(NewCmdSandbox(f), append([]string{"init"}, tt.args...)...)
 			require.Error(t, err)
@@ -317,7 +335,7 @@ func TestInit_SeedFlagOutOfRange(t *testing.T) {
 	for _, seed := range []string{"-1", "101"} {
 		t.Run(seed, func(t *testing.T) {
 			f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-				t.Error("must not provision anything with an out-of-range --seed")
+				assert.Fail(t, "must not provision anything with an out-of-range --seed")
 			})
 			err := run(NewCmdSandbox(f), "init", "--seed", seed)
 			require.Error(t, err)
@@ -366,7 +384,7 @@ func TestInit_PartialResultWhenAStepFails(t *testing.T) {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{"status":"error","error_code":"validation_error","message":"loi","errors":{"url":"URL kh\u00f4ng h\u1ee3p l\u1ec7"}}`))
 		default:
-			t.Errorf("unexpected call %s %s", r.Method, r.URL.Path)
+			assert.Failf(t, "unexpected request", "unexpected call %s %s", r.Method, r.URL.Path)
 		}
 	}
 
@@ -436,7 +454,7 @@ func TestReset_DeletesAll(t *testing.T) {
 			deletes = append(deletes, r.URL.Path)
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			assert.Failf(t, "unexpected request", "unexpected %s %s", r.Method, r.URL.Path)
 		}
 	})
 	f.Global.Yes = true
@@ -447,7 +465,7 @@ func TestReset_DeletesAll(t *testing.T) {
 
 func TestReset_NeedsConfirmNonInteractive(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not delete anything without confirmation")
+		assert.Fail(t, "must not delete anything without confirmation")
 	})
 	err := run(NewCmdSandbox(f), "reset")
 	require.Error(t, err)
@@ -456,7 +474,7 @@ func TestReset_NeedsConfirmNonInteractive(t *testing.T) {
 
 func TestReset_RejectsProductionEnv(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not touch the server when env is production")
+		assert.Fail(t, "must not touch the server when env is production")
 	})
 	f.Global.Env = "production"
 	f.Global.Yes = true
@@ -468,7 +486,7 @@ func TestReset_RejectsProductionEnv(t *testing.T) {
 
 func TestSimulate_RejectsProductionEnv(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not simulate against production")
+		assert.Fail(t, "must not simulate against production")
 	})
 	f.Global.Env = "production"
 	err := run(NewCmdSandbox(f), "simulate", "payment_in", "--bank-account", "ba_1", "--amount", "1000")
@@ -483,7 +501,7 @@ func TestReset_SurfacesListError(t *testing.T) {
 			_, _ = w.Write([]byte(`{"status":"error","error_code":"unauthorized","message":"nope"}`))
 			return
 		}
-		t.Error("must not delete when listing failed")
+		assert.Fail(t, "must not delete when listing failed")
 	})
 	f.Global.Yes = true
 	err := run(NewCmdSandbox(f), "reset")
@@ -589,7 +607,7 @@ func TestSimulate_EventValidation(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-				t.Error("must not call the server on an invalid event")
+				assert.Fail(t, "must not call the server on an invalid event")
 			})
 
 			err := run(NewCmdSandbox(f), tt.args...)
@@ -604,7 +622,7 @@ func TestSimulate_EventValidation(t *testing.T) {
 // No event at all is the "required" usage error, not a domain complaint about "".
 func TestSimulate_EmptyEventIsUnset(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not call the server without an event")
+		assert.Fail(t, "must not call the server without an event")
 	})
 	err := run(NewCmdSandbox(f), "simulate", "--event", "", "--bank-account", "ba_1", "--amount", "1000")
 	require.Error(t, err)
@@ -614,7 +632,7 @@ func TestSimulate_EmptyEventIsUnset(t *testing.T) {
 
 func TestSimulate_CodeLength(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not call the server with an over-long code")
+		assert.Fail(t, "must not call the server with an over-long code")
 	})
 	err := run(NewCmdSandbox(f), "simulate", "payment_in",
 		"--bank-account", "ba_1", "--amount", "1000", "--code", "ABCDEFGHIJK") // 11
@@ -656,11 +674,11 @@ func TestSeed_CountBoundsMatchSeedFlag(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-				t.Error("must not write a transaction for a count out of bounds")
+				assert.Fail(t, "must not write a transaction for a count out of bounds")
 			})
 			err := run(NewCmdSandbox(f), "seed", "--bank-account", "ba_1", "--count", tc.count)
 			require.Error(t, err)
-			assert.EqualError(t, err, tc.want)
+			require.EqualError(t, err, tc.want)
 			assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 		})
 	}
@@ -670,7 +688,7 @@ func TestSeed_CountBoundsMatchSeedFlag(t *testing.T) {
 // refuse never asks the user to pick an account first.
 func TestSeed_BadCountIsRefusedBeforeThePicker(t *testing.T) {
 	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("must not fetch bank accounts for a count out of bounds")
+		assert.Fail(t, "must not fetch bank accounts for a count out of bounds")
 	})
 	err := run(NewCmdSandbox(f), "seed", "--count", "-1")
 	require.Error(t, err)
@@ -702,6 +720,45 @@ func TestSeed_AcceptedCounts(t *testing.T) {
 			argv := append([]string{"seed", "--bank-account", "ba_1"}, tc.argv...)
 			require.NoError(t, run(NewCmdSandbox(f), argv...))
 			assert.Equal(t, tc.want, atomic.LoadInt32(&count))
+		})
+	}
+}
+
+func TestInit_ChecksTheBankCode(t *testing.T) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("must not provision with an unknown bank: %s %s", r.Method, r.URL.Path)
+	})
+	err := run(NewCmdSandbox(f), "init", "--bank", "XYZ", "--seed", "0")
+	require.EqualError(t, err, `--bank "XYZ" is not a supported bank code (have: ACB, BIDV)`)
+}
+
+func TestInit_DefaultBankComesFromTheServerList(t *testing.T) {
+	cases := []struct {
+		name, banks, want string
+	}{
+		{"ACB offered", banksJSON, "ACB"},
+		{"ACB listed under another code", `{"status":"success","data":[{"code":"BIDV"},{"code":"ACBE2E","short_name":"ACB"}]}`, "ACBE2E"},
+		{"ACB not offered", `{"status":"success","data":[{"code":"VCB"},{"code":"BIDV"}]}`, "VCB"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var bank any
+			f, _, _ := bankListFactory(t, c.banks, func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodPost && r.URL.Path == "/bank-accounts":
+					var body map[string]any
+					b, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(b, &body)
+					bank = body["bank"]
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{"status":"success","data":{"id":"ba_1"}}`))
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			})
+			f.Global.Yes = true
+			require.NoError(t, run(NewCmdSandbox(f), "init"))
+			assert.Equal(t, c.want, bank)
 		})
 	}
 }

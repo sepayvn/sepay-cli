@@ -14,9 +14,10 @@ import (
 	"time"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
+	"github.com/sepayvn/sepay-cli/internal/config"
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/iostreams"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,9 +37,7 @@ func factoryForAPI(url string) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer) 
 // sseHub streams frames, then holds the connection until the client disconnects.
 func sseHub(t *testing.T, frames ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer lk_test" {
-			t.Errorf("subscribe auth = %q, want Bearer lk_test", got)
-		}
+		assert.Equal(t, "Bearer lk_test", r.Header.Get("Authorization"), "subscribe auth")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl := w.(http.Flusher)
@@ -98,7 +97,7 @@ func TestListen_ForwardsEventThenExitsOnCancel(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("command did not exit after cancel")
+		require.Fail(t, "command did not exit after cancel")
 	}
 	assert.Contains(t, string(gotBody), "transferAmount")
 }
@@ -156,15 +155,16 @@ func TestListen_SlowHandlerDropsNotStall(t *testing.T) {
 	for !strings.Contains(errBuf.String(), "dropped") {
 		select {
 		case <-deadline:
-			t.Fatal("no drop warning: read loop stalled on the slow handler")
+			require.Fail(t, "no drop warning: read loop stalled on the slow handler")
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("command did not exit after cancel")
+		require.Fail(t, "command did not exit after cancel")
 	}
 }
 
@@ -199,13 +199,14 @@ func TestListen_ReplaysHeaders(t *testing.T) {
 		assert.Equal(t, "sha256=abc", h.Get("X-SePay-Signature"))
 		assert.Equal(t, "application/json", h.Get("Content-Type"))
 	case <-time.After(3 * time.Second):
-		t.Fatal("handler did not receive the forwarded event")
+		require.Fail(t, "handler did not receive the forwarded event")
 	}
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("command did not exit after cancel")
+		require.Fail(t, "command did not exit after cancel")
 	}
 }
 
@@ -219,7 +220,7 @@ func waitFor(t *testing.T, lines <-chan string, want string) {
 				return
 			}
 		case <-deadline:
-			t.Fatalf("did not see %q on stdout", want)
+			require.Failf(t, "output not seen", "did not see %q on stdout", want)
 		}
 	}
 }
@@ -255,10 +256,10 @@ func TestListen_EventsFilter(t *testing.T) {
 		assert.Contains(t, string(body), "IN")
 		assert.NotContains(t, string(body), "OUT", "payment_out must be filtered out")
 	case <-time.After(3 * time.Second):
-		t.Fatal("handler did not receive the filtered event")
+		require.Fail(t, "handler did not receive the filtered event")
 	}
 	cancel()
-	<-done
+	require.NoError(t, <-done)
 }
 
 func TestListen_UnauthorizedExit4(t *testing.T) {
@@ -319,7 +320,7 @@ func TestListen_HubCutThenRevokedMintExits4(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, cmdutil.ExitAuth, cmdutil.ExitCodeForError(err))
 	case <-time.After(10 * time.Second):
-		t.Fatal("listen did not stop after the hub cut a revoked session")
+		require.Fail(t, "listen did not stop after the hub cut a revoked session")
 	}
 }
 
@@ -359,10 +360,10 @@ func TestListen_HubCutRemintsAndKeepsListening(t *testing.T) {
 	select {
 	case <-received:
 	case <-time.After(10 * time.Second):
-		t.Fatal("listen did not resume after the hub cut a still-valid session")
+		require.Fail(t, "listen did not resume after the hub cut a still-valid session")
 	}
 	cancel()
-	<-done
+	require.NoError(t, <-done)
 }
 
 func TestListen_ReconnectMaxExhausted(t *testing.T) {
@@ -403,7 +404,7 @@ func TestListen_FlappingHubHonoursReconnectMax(t *testing.T) {
 	case err := <-done:
 		require.Error(t, err, "a flapping hub must exhaust --reconnect-max")
 	case <-time.After(15 * time.Second):
-		t.Fatal("listen ignored --reconnect-max against a flapping hub (open-then-drop reset the counter)")
+		require.Fail(t, "listen ignored --reconnect-max against a flapping hub (open-then-drop reset the counter)")
 	}
 	assert.Contains(t, errOut.String(), "retrying (attempt 2)")
 }
@@ -441,10 +442,10 @@ func TestListen_ForwardsAllDeliveryHeaders(t *testing.T) {
 		assert.Equal(t, "s3cr3t", h.Get("X-Secret-Key"))
 		assert.Equal(t, "keep", h.Get("X-Custom"), "every delivery header is forwarded verbatim")
 	case <-time.After(3 * time.Second):
-		t.Fatal("handler did not receive the forwarded event")
+		require.Fail(t, "handler did not receive the forwarded event")
 	}
 	cancel()
-	<-done
+	require.NoError(t, <-done)
 }
 
 func TestListen_RefusesAHubURLOutsideTheActiveEnv(t *testing.T) {
@@ -539,10 +540,10 @@ func TestListen_SkipTLSVerifyWithholdsCredentials(t *testing.T) {
 		assert.Empty(t, h.Get("Authorization"))
 		assert.Empty(t, h.Get("X-Secret-Key"))
 	case <-time.After(3 * time.Second):
-		t.Fatal("handler did not receive the forwarded event")
+		require.Fail(t, "handler did not receive the forwarded event")
 	}
 	cancel()
-	<-done
+	require.NoError(t, <-done)
 	assert.Contains(t, errOut.String(), "TLS verification is off")
 }
 
@@ -596,7 +597,7 @@ func TestListen_HeadersRedactsCredentials(t *testing.T) {
 		return strings.Contains(out.String(), "Content-Type")
 	}, 3*time.Second, 20*time.Millisecond, "headers block never printed")
 	cancel()
-	<-done
+	require.NoError(t, <-done)
 
 	// Authenticating header values are redacted on stdout; the signature is shown.
 	s := out.String()
@@ -692,7 +693,7 @@ func waitForErr(t *testing.T, buf *safeBuf, want string) {
 	for !strings.Contains(buf.String(), want) {
 		select {
 		case <-deadline:
-			t.Fatalf("did not see %q on stderr; got:\n%s", want, buf.String())
+			require.Failf(t, "output not seen", "did not see %q on stderr; got:\n%s", want, buf.String())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
@@ -731,7 +732,7 @@ func listenAgainstDeadHandler(t *testing.T, extraArgs ...string) (*safeBuf, func
 		case err := <-done:
 			require.NoError(t, err)
 		case <-time.After(3 * time.Second):
-			t.Error("command did not exit after cancel")
+			assert.Fail(t, "command did not exit after cancel")
 		}
 		apiSrv.Close()
 		hub.Close()
@@ -883,7 +884,7 @@ func TestListen_RetriesANon2xxWhenTheWebhookAsksForIt(t *testing.T) {
 	for !strings.Contains(outBuf.String(), "retry 1/7") {
 		select {
 		case <-deadline:
-			t.Fatalf("a non-2xx did not arm a retry; stdout:\n%s\nstderr:\n%s", outBuf.String(), errBuf.String())
+			require.Failf(t, "retry not armed", "a non-2xx did not arm a retry; stdout:\n%s\nstderr:\n%s", outBuf.String(), errBuf.String())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
@@ -895,7 +896,7 @@ func TestListen_RetriesANon2xxWhenTheWebhookAsksForIt(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("command did not exit after cancel")
+		require.Fail(t, "command did not exit after cancel")
 	}
 }
 
@@ -922,4 +923,14 @@ func TestWebhookTag_ToleratesAMissingXid(t *testing.T) {
 	empty, err := listen.Decode([]byte(`{"payload":{}}`))
 	require.NoError(t, err)
 	assert.Empty(t, webhookTag(ios, empty))
+}
+
+func TestListen_RefusesProduction(t *testing.T) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("production listen must not reach the API: %s %s", r.Method, r.URL.Path)
+	})
+	f.Global.Env = config.EnvProduction
+	err := run(NewCmdWebhook(f), "listen", "--forward", "localhost:3000")
+	require.EqualError(t, err, "webhook listen is sandbox-only; drop --env production")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 }

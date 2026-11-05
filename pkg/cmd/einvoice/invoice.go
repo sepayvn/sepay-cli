@@ -67,18 +67,18 @@ type invoiceItem struct {
 func newInvoiceCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "invoice <command>",
-		Short: "Manage invoices (create/issue are async: submit then poll)",
+		Short: "Invoices (create and issue are async: submit, then poll)",
 	}
 	cmd.AddCommand(
 		newInvoiceListCmd(f),
 		newInvoiceGetCmd(f),
 		newInvoiceCreateCmd(f),
-		newInvoiceCheckCmd(f, "create-status", "/v1/invoices/create/check/", "Poll a create submission to Success/Failed"),
+		newInvoiceCheckCmd(f, "create-status", "/v1/invoices/create/check/", "Poll a create submission to Success/Failed", "create"),
 		newInvoiceIssueCmd(f),
-		newInvoiceCheckCmd(f, "issue-status", "/v1/invoices/issue/check/", "Poll an issue submission to Success/Failed"),
+		newInvoiceCheckCmd(f, "issue-status", "/v1/invoices/issue/check/", "Poll an issue submission to Success/Failed", "issue"),
 		// No backend route yet (404).
-		cmdutil.Stub(&cobra.Command{Use: "download <ref>", Short: "Download the invoice PDF/XML", Args: cobra.ExactArgs(1)}),
-		cmdutil.Stub(&cobra.Command{Use: "delete <ref>", Aliases: []string{"rm", "del"}, Short: "Delete a draft invoice", Args: cobra.ExactArgs(1)}),
+		cmdutil.Stub(&cobra.Command{Use: "download <reference-code>", Short: "Download the invoice PDF/XML", Args: cobra.ExactArgs(1)}),
+		cmdutil.Stub(&cobra.Command{Use: "delete <reference-code>", Aliases: []string{"rm", "del"}, Short: "Delete a draft invoice", Args: cobra.ExactArgs(1)}),
 	)
 	return cmd
 }
@@ -100,12 +100,16 @@ type checkResult struct {
 
 func newInvoiceCreateCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:     "create [payload]",
+		Use:     "create <payload>",
 		Aliases: []string{"new"},
 		Short:   "Submit an invoice (async); payload is @file, - for stdin, or inline JSON",
-		Long: "Submit an invoice for creation. The payload is the invoice JSON — pass it as\n" +
-			"@path/to/file.json, - to read stdin, or an inline JSON string. Returns a\n" +
-			"tracking code; poll it with 'einvoice invoice create-status <ref>'.",
+		Long: `Submit an invoice for creation. <payload> is the invoice JSON: @path/to/file.json,
+- to read stdin, or an inline JSON string. Prompted for on a terminal; required otherwise.
+
+This is asynchronous: the command prints a tracking code, and
+"einvoice invoice create-status <tracking-code>" reports the result.`,
+		Example: `  sepay einvoice invoice create @invoice.json
+  cat invoice.json | sepay einvoice invoice create -`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			arg, err := f.InputOrArg(cmdutil.FirstArg(args), "an invoice payload", "Invoice JSON (@file, - for stdin, or inline)")
@@ -123,9 +127,16 @@ func newInvoiceCreateCmd(f *cmdutil.Factory) *cobra.Command {
 
 func newInvoiceIssueCmd(f *cmdutil.Factory) *cobra.Command {
 	return cmdutil.Annotate(&cobra.Command{
-		Use:   "issue [ref]",
+		Use:   "issue <reference-code>",
 		Short: "Issue a drafted invoice (async); returns a tracking code",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Issue a drafted invoice to the tax authority. This is asynchronous: the command
+submits it and prints a tracking code; "einvoice invoice issue-status" reports the result.
+
+<reference-code> is the REF column of "sepay einvoice invoice list". Prompted for on a terminal; required otherwise.`,
+		Example: `  sepay einvoice invoice issue <reference-code>
+  # then poll the tracking code it prints
+  sepay einvoice invoice issue-status <tracking-code>`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := f.InputOrArg(cmdutil.FirstArg(args), "an invoice reference code", "Invoice reference code")
 			if err != nil {
@@ -165,11 +176,13 @@ func runInvoiceSubmit(ctx context.Context, f *cmdutil.Factory, path string, body
 	})
 }
 
-func newInvoiceCheckCmd(f *cmdutil.Factory, use, pathPrefix, short string) *cobra.Command {
+func newInvoiceCheckCmd(f *cmdutil.Factory, use, pathPrefix, short, submitVerb string) *cobra.Command {
 	return &cobra.Command{
-		Use:   use + " [ref]",
+		Use:   use + " <tracking-code>",
 		Short: short,
-		Args:  cobra.MaximumNArgs(1),
+		Long: "Report the status of a submission from \"einvoice invoice " + submitVerb + "\", with the reason when it failed.\n\n" +
+			"<tracking-code> is the code \"einvoice invoice " + submitVerb + "\" prints. Prompted for on a terminal; required otherwise.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := f.InputOrArg(cmdutil.FirstArg(args), "a tracking code", "Tracking / reference code")
 			if err != nil {
@@ -260,7 +273,13 @@ func newInvoiceListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List invoices",
-		Args:    cobra.NoArgs,
+		Long: `List invoices with their reference code, number, status and total. --source
+separates invoices made in the portal (manual) from those made through the API.
+
+The REF column is the <reference-code> "einvoice invoice get" and "issue" take.`,
+		Example: `  sepay einvoice invoice list --source api
+  sepay einvoice invoice list --page 2 --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := cmdutil.ValidateChoice(cmd, "source", invoiceSources); err != nil {
 				return err
@@ -318,9 +337,12 @@ func runInvoiceList(ctx context.Context, f *cmdutil.Factory, query url.Values) e
 
 func newInvoiceGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get [ref]",
+		Use:   "get <reference-code>",
 		Short: "Show an invoice and its line items",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Show an invoice and its line items.
+
+<reference-code> is the REF column of "sepay einvoice invoice list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := f.InputOrArg(cmdutil.FirstArg(args), "an invoice reference code", "Invoice reference code")
 			if err != nil {

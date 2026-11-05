@@ -38,6 +38,8 @@ type flagInfo struct {
 	Desc      string `json:"desc,omitempty"`
 	// Absent is not optional: conditional requirements are stated in Desc.
 	Required bool `json:"required,omitempty"`
+	// a hidden second spelling of this flag, accepted for compatibility
+	AliasOf string `json:"alias_of,omitempty"`
 }
 
 type commandMap struct {
@@ -81,7 +83,7 @@ func writeCommandMap(w io.Writer, root *cobra.Command, f *cmdutil.Factory, forma
 		loggedIn, profile := authState(f)
 		return jsonfmt.RenderJSON(w, commandMap{
 			Name:          root.Name(),
-			Version:       build.Version,
+			Version:       build.Number(),
 			ActiveEnv:     f.ActiveEnv(),
 			Authenticated: loggedIn,
 			ActiveProfile: profile,
@@ -147,7 +149,11 @@ func describe(cmd *cobra.Command) commandInfo {
 	}
 	required := cmdutil.RequiredFlags(cmd)
 	cmd.LocalNonPersistentFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Hidden {
+		var aliasOf string
+		if v := f.Annotations[cmdutil.AnnAliasOf]; len(v) > 0 {
+			aliasOf = v[0]
+		}
+		if f.Hidden && aliasOf == "" {
 			return
 		}
 		info.Flags = append(info.Flags, flagInfo{
@@ -157,6 +163,7 @@ func describe(cmd *cobra.Command) commandInfo {
 			Default:   f.DefValue,
 			Desc:      f.Usage,
 			Required:  required[f.Name],
+			AliasOf:   aliasOf,
 		})
 	})
 	return info

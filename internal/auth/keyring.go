@@ -20,7 +20,7 @@ type credStore interface {
 type keyringStore struct{}
 
 func (keyringStore) set(key string, c *Credential) error {
-	data, err := json.Marshal(c)
+	data, err := json.Marshal(c) //nolint:gosec // G117: serialized into the OS keychain, its intended store
 	if err != nil {
 		return err
 	}

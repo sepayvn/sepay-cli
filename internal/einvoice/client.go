@@ -105,7 +105,7 @@ func (c *Client) do(ctx context.Context, method, path string, bodyBytes []byte) 
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(req) //nolint:bodyclose // api.ReadBody closes it
 		if err != nil {
 			return nil, api.NewTransportError(req.URL.Host, c.httpClient.Timeout, err)
 		}

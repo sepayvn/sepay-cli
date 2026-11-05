@@ -6,10 +6,10 @@ import (
 	"fmt"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/iostreams"
 	"github.com/sepayvn/sepay-cli/pkg/jsonfmt"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/spf13/cobra"
 )
@@ -26,17 +26,17 @@ var IPNEvents = []string{"transaction_credit", "transaction_debit"}
 // ipnConfig is GET /v2/bankhub/ipn; APIKey arrives server-masked.
 type ipnConfig struct {
 	Configured bool   `json:"configured" yaml:"configured"`
-	IpnURL     string `json:"ipn_url" yaml:"ipn_url"`
+	IPNURL     string `json:"ipn_url" yaml:"ipn_url"`
 	APIKey     string `json:"api_key" yaml:"api_key"`
 	// Set only: linked accounts moved to the new endpoint, out of AccountsTotal.
 	AccountsUpdated *int `json:"accounts_updated,omitempty" yaml:"accounts_updated,omitempty"`
 	AccountsTotal   *int `json:"accounts_total,omitempty" yaml:"accounts_total,omitempty"`
 }
 
-func newIpnCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ipn <command>",
-		Short: "Bank Hub IPN: stream it locally, or configure where it goes",
+		Short: "Bank Hub IPN (instant payment notification): local stream and endpoint",
 		Long: `A transfer on a merchant's linked account reports back over IPN (a balance-change notification)
 — a channel of its own, separate from the ` + "`sepay bankhub webhook`" + ` that carries
 account-linking events.
@@ -47,11 +47,11 @@ same body, same headers — so you can build against real notifications.
 
 Body reference: https://developer.sepay.vn/en/bankhub/thong-bao-bien-dong-so-du`,
 	}
-	cmd.AddCommand(newIpnListenCmd(f), newIpnGetCmd(f), newIpnSetCmd(f))
-	return cmd
+	cmd.AddCommand(newIPNListenCmd(f), newIPNGetCmd(f), newIPNSetCmd(f))
+	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnHost: cmdutil.HostAPI})
 }
 
-func newIpnListenCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNListenCmd(f *cmdutil.Factory) *cobra.Command {
 	var bankAccount string
 	cmd := &cobra.Command{
 		Use:     "listen",
@@ -109,19 +109,19 @@ func ipnListenSource(bankAccount string) listen.Source {
 		RevokePath: ipnListenPath,
 		Noun:       "Bank Hub IPN",
 		Scope:      "bankhub_ipn",
-		Describe:   describeIpnCoverage,
+		Describe:   describeIPNCoverage,
 		Accept:     acceptBankAccount(bankAccount),
 		Tag:        bankAccountTag,
 	}
 }
 
-// describeIpnCoverage warns up front when nothing can arrive. Best-effort.
-func describeIpnCoverage(ctx context.Context, f *cmdutil.Factory) {
+// describeIPNCoverage warns up front when nothing can arrive. Best-effort.
+func describeIPNCoverage(ctx context.Context, f *cmdutil.Factory) {
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return
 	}
-	cfg, err := fetchIpnConfig(ctx, client)
+	cfg, err := fetchIPNConfig(ctx, client)
 
 	out := f.IOStreams.ErrOut
 	switch {
@@ -165,7 +165,7 @@ func bankAccountTag(io *iostreams.IOStreams, fr listen.Frame) string {
 		listen.Tag(io, "ba", bankAccountXID(fr))
 }
 
-func newIpnGetCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:     "get",
 		Aliases: []string{"show"},
@@ -176,35 +176,39 @@ func newIpnGetCmd(f *cmdutil.Factory) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := fetchIpnConfig(cmd.Context(), client)
+			cfg, err := fetchIPNConfig(cmd.Context(), client)
 			if err != nil {
 				return err
 			}
-			return renderIpnConfig(f, cfg)
+			return renderIPNConfig(f, cfg)
 		},
 	}
 }
 
-func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNSetCmd(f *cmdutil.Factory) *cobra.Command {
 	var apiKey string
 	cmd := &cobra.Command{
-		Use:   "set [url]",
+		Use:   "set <url>",
 		Short: "Set where Bank Hub IPN is delivered",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Set the URL that receives Bank Hub IPN for every linked account, and the shared
+key SePay sends with each delivery (--api-key).
+
+<url> must be publicly reachable. Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := f.NewAPIClient()
 			if err != nil {
 				return err
 			}
 			// A failed read is not an empty config; the auth prompt needs to tell them apart.
-			current, readErr := fetchIpnConfig(cmd.Context(), client)
+			current, readErr := fetchIPNConfig(cmd.Context(), client)
 			if readErr != nil {
 				current = ipnConfig{}
 			}
 
 			arg := cmdutil.FirstArg(args)
 			if arg == "" && current.Configured && f.CanPrompt() {
-				f.ErrPrintf("%s\n", f.IOStreams.Dim("current: "+current.IpnURL))
+				f.ErrPrintf("%s\n", f.IOStreams.Dim("current: "+current.IPNURL))
 			}
 			url, err := f.InputOrArg(arg, "an IPN URL", "IPN URL")
 			if err != nil {
@@ -222,7 +226,7 @@ func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
 				}
 				body["api_key"] = resolved
 			}
-			if err := promptIpnAuth(f, cmd, body, current, readErr == nil); err != nil {
+			if err := promptIPNAuth(f, cmd, body, current, readErr == nil); err != nil {
 				return err
 			}
 
@@ -240,10 +244,10 @@ func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
 			}
 			// POST echoes are not masked like the GET.
 			cfg.APIKey = cmdutil.MaskSecret(cfg.APIKey)
-			return renderIpnConfig(f, cfg)
+			return renderIPNConfig(f, cfg)
 		},
 	}
-	cmd.Flags().StringVar(&apiKey, "api-key", "", "Shared key sent as `Authorization: Apikey …`, or - to read it from stdin (empty turns auth off)")
+	cmd.Flags().StringVar(&apiKey, "api-key", "", "Shared key sent in the Authorization: Apikey header, or - to read it from stdin (empty turns auth off)")
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnConfirms: "always",
 		cmdutil.AnnGuidance: "Changes only what you pass: omitting --api-key keeps the stored key, so setting a URL " +
@@ -253,9 +257,9 @@ func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
 	})
 }
 
-// promptIpnAuth asks for the delivery auth, reading the key without echo.
+// promptIPNAuth asks for the delivery auth, reading the key without echo.
 // Skipped when the read failed, so a transient error cannot offer to wipe a live key.
-func promptIpnAuth(f *cmdutil.Factory, cmd *cobra.Command, body map[string]any, current ipnConfig, readOK bool) error {
+func promptIPNAuth(f *cmdutil.Factory, cmd *cobra.Command, body map[string]any, current ipnConfig, readOK bool) error {
 	if cmd.Flags().Changed("api-key") || !f.CanPrompt() {
 		return nil
 	}
@@ -300,8 +304,8 @@ func promptIpnAuth(f *cmdutil.Factory, cmd *cobra.Command, body map[string]any, 
 	return nil
 }
 
-// fetchIpnConfig returns the error so callers can tell no URL, no merchant and a failed read apart.
-func fetchIpnConfig(ctx context.Context, client *api.Client) (ipnConfig, error) {
+// fetchIPNConfig returns the error so callers can tell no URL, no merchant and a failed read apart.
+func fetchIPNConfig(ctx context.Context, client *api.Client) (ipnConfig, error) {
 	env, err := client.Get(ctx, ipnPath, nil)
 	if err != nil {
 		return ipnConfig{}, err
@@ -309,14 +313,14 @@ func fetchIpnConfig(ctx context.Context, client *api.Client) (ipnConfig, error) 
 	return api.DataInto[ipnConfig](env)
 }
 
-func renderIpnConfig(f *cmdutil.Factory, cfg ipnConfig) error {
+func renderIPNConfig(f *cmdutil.Factory, cfg ipnConfig) error {
 	return f.RenderOutput(cfg, func() error {
 		if !cfg.Configured {
 			fmt.Fprintf(f.IOStreams.Out,
 				"No IPN configured, so nothing is delivered and `sepay bankhub ipn listen` receives nothing. Add an endpoint: sepay bankhub ipn set <url>\n")
 			return nil
 		}
-		f.Printf("URL:      %s\nKey:      %s\n", cfg.IpnURL, jsonfmt.OrDash(cfg.APIKey))
+		f.Printf("URL:      %s\nKey:      %s\n", cfg.IPNURL, jsonfmt.OrDash(cfg.APIKey))
 		if cfg.AccountsUpdated != nil && cfg.AccountsTotal != nil {
 			fmt.Fprintf(f.IOStreams.Out, "Accounts: %d of %d updated\n", *cfg.AccountsUpdated, *cfg.AccountsTotal)
 			if *cfg.AccountsUpdated < *cfg.AccountsTotal {

@@ -2,7 +2,6 @@ package pg
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
@@ -80,11 +79,11 @@ func TestCheckoutInit_JSONKeepsTheRawURL(t *testing.T) {
 	require.NoError(t, run(f, "checkout", "init", "--amount", "150000", "--description", "e2e", "--invoice", "INV-1"))
 	assert.Contains(t, out.String(), "checkout_url")
 	assert.Contains(t, out.String(), loc)
-	assert.False(t, strings.Contains(out.String(), "\x1b["), "machine output carries no ANSI")
+	assert.NotContains(t, out.String(), "\x1b[", "machine output carries no ANSI")
 }
 
 // merchantThenInit serves the pre-flight GET and the checkout POST, counting each.
-func merchantThenInit(merchantBody string, loc string, merchantHits, initHits *int) http.HandlerFunc {
+func merchantThenInit(merchantBody, loc string, merchantHits, initHits *int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/merchant":
@@ -138,7 +137,7 @@ func TestCheckoutInit_NoActivePaymentMethodIsNamed(t *testing.T) {
 	r := runCheckoutAgainst(t, allMethodsOff)
 	require.Error(t, r.err)
 	assert.Contains(t, r.err.Error(), "no active payment method")
-	assert.Contains(t, r.err.Error(), "sepay pg merchant show", "the error has to say how to check")
+	assert.Contains(t, r.err.Error(), "sepay pg merchant get", "the error has to say how to check")
 	assert.Equal(t, 0, r.initHits, "nothing may be created server-side once the environment is known to be unusable")
 	assert.Equal(t, 1, r.merchantHits)
 	assert.EqualValues(t, 1, cmdutil.ExitCodeForError(r.err), "a merchant-state refusal is not a usage error")

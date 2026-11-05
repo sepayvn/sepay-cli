@@ -33,7 +33,7 @@ type transaction struct {
 }
 
 func newTransactionCmd(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "transaction <command>", Aliases: []string{"tx", "txn"}, Short: "List transactions"}
+	cmd := &cobra.Command{Use: "transaction <command>", Aliases: []string{"tx", "txn"}, Short: "Transactions on linked bank accounts"}
 	cmd.AddCommand(newTransactionListCmd(f), newTransactionGetCmd(f))
 	return cmd
 }
@@ -45,12 +45,22 @@ func newTransactionListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List transactions",
-		Args:    cobra.NoArgs,
+		Long: `List transactions on the bank accounts merchants linked through Bank Hub. Filter
+by company, bank account, direction (--type credit|debit) or date.
+
+The TRANSACTION column is what "bankhub transaction get" takes.`,
+		Example: `  # money in on one linked account this month
+  sepay bankhub transaction list --bank-account <bank-account-xid> --type credit --from 2026-11-01
+  sepay bankhub transaction list --company <company-xid> --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := cmdutil.ValidateChoice(cmd, "type", transferTypes); err != nil {
 				return err
 			}
 			if err := cmdutil.ValidateDays(cmd, "from", "to"); err != nil {
+				return err
+			}
+			if err := cmdutil.ValidateDateOrder(cmd, "from", "to"); err != nil {
 				return err
 			}
 			query := url.Values{}
@@ -81,7 +91,8 @@ func newTransactionListCmd(f *cmdutil.Factory) *cobra.Command {
 	fl.StringVar(&transferType, "type", "", "Filter by transfer type: "+strings.Join(transferTypes, "|"))
 	fl.StringVar(&from, "from", "", "From transaction date (YYYY-MM-DD)")
 	fl.StringVar(&to, "to", "", "To transaction date (YYYY-MM-DD)")
-	fl.StringVar(&q, "q", "", "Search transactions")
+	fl.StringVar(&q, "search", "", "Search transactions")
+	cmdutil.AliasFlag(fl, "q", "search")
 	fl.IntVar(&page, "page", 0, "Page number")
 	fl.IntVar(&perPage, "per-page", 0, "Rows per page (max 100)")
 	return cmd
@@ -126,7 +137,11 @@ func newTransactionGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <transaction-id>",
 		Short: "Show a transaction",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show one transaction on a linked bank account.
+
+<transaction-id> is the TRANSACTION column of "sepay bankhub transaction list".
+It is required; there is no prompt.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// An empty id routes to the list endpoint.
 			if args[0] == "" {

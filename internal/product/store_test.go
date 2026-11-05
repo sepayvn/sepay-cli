@@ -3,6 +3,7 @@ package product
 import (
 	"errors"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ func TestStore_KeychainRoundtrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, usedFile)
 
-	got, err := s.Get("default", PG, "sandbox")
+	got, err := s.Get("default", PG, "sandbox", false)
 	require.NoError(t, err)
 	assert.Equal(t, "SP-1", got.MerchantID)
 	assert.Equal(t, "spsk_x", got.SecretKey)
@@ -34,7 +35,7 @@ func TestStore_KeychainRoundtrip(t *testing.T) {
 func TestStore_GetMissing(t *testing.T) {
 	keyring.MockInit()
 	s := NewStore(t.TempDir())
-	_, err := s.Get("default", PG, "sandbox")
+	_, err := s.Get("default", PG, "sandbox", false)
 	assert.ErrorIs(t, err, ErrNotCached)
 }
 
@@ -47,11 +48,13 @@ func TestStore_InsecureWritesFile0600(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, usedFile)
 
-	info, err := os.Stat(s.Path())
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	if runtime.GOOS != "windows" { // Windows has no Unix permission bits
+		info, err := os.Stat(s.Path())
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
-	got, err := s.Get("default", PG, "sandbox")
+	got, err := s.Get("default", PG, "sandbox", false)
 	require.NoError(t, err)
 	assert.Equal(t, "spsk_x", got.SecretKey)
 }
@@ -67,9 +70,9 @@ func TestStore_KeychainUnavailableRefusesInsteadOfWritingTheFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "run: sepay login")
 	assert.False(t, usedFile)
 	_, statErr := os.Stat(dir + "/" + ProductsFile)
-	assert.ErrorIs(t, statErr, os.ErrNotExist, "nothing written to the plaintext file")
+	require.ErrorIs(t, statErr, os.ErrNotExist, "nothing written to the plaintext file")
 
-	_, err = s.Get("default", PG, "sandbox")
+	_, err = s.Get("default", PG, "sandbox", false)
 	assert.ErrorIs(t, err, ErrNotCached)
 }
 
@@ -81,7 +84,7 @@ func TestStore_InsecureWritesTheFileWithoutAKeychain(t *testing.T) {
 	usedFile, err := s.Set("default", PG, "sandbox", basicCred(), true)
 	require.NoError(t, err)
 	assert.True(t, usedFile)
-	got, err := s.Get("default", PG, "sandbox")
+	got, err := s.Get("default", PG, "sandbox", false)
 	require.NoError(t, err)
 	assert.Equal(t, "spsk_x", got.SecretKey)
 }
@@ -100,12 +103,12 @@ func TestStore_EvictProfileRemovesAllProductsBothStores(t *testing.T) {
 
 	require.NoError(t, s.EvictProfile("acme"))
 
-	_, err = s.Get("acme", PG, "sandbox")
-	assert.ErrorIs(t, err, ErrNotCached, "keychain cred evicted")
-	_, err = s.Get("acme", EInvoice, "production")
-	assert.ErrorIs(t, err, ErrNotCached, "file-fallback cred evicted")
+	_, err = s.Get("acme", PG, "sandbox", false)
+	require.ErrorIs(t, err, ErrNotCached, "keychain cred evicted")
+	_, err = s.Get("acme", EInvoice, "production", false)
+	require.ErrorIs(t, err, ErrNotCached, "file-fallback cred evicted")
 
-	got, err := s.Get("other", PG, "sandbox")
+	got, err := s.Get("other", PG, "sandbox", false)
 	require.NoError(t, err, "other profile untouched")
 	assert.Equal(t, "SP-1", got.MerchantID)
 }
@@ -182,6 +185,26 @@ func TestStore_EvictProfileReportsAKeychainFailure(t *testing.T) {
 	require.Error(t, evictErr, "a failed keychain delete must reach the caller")
 
 	keyring.MockInit()
-	_, err = s.Get("acme", EInvoice, "sandbox")
+	_, err = s.Get("acme", EInvoice, "sandbox", false)
 	assert.ErrorIs(t, err, ErrNotCached)
+}
+
+// A file-storage login could not evict the keychain; the keychain came back with the previous
+// account's credential under the same label. The profile on file storage must not read it.
+func TestStore_InsecureGetIgnoresAStaleKeychainEntry(t *testing.T) {
+	keyring.MockInit()
+	s := NewStore(t.TempDir())
+	stale := basicCred()
+	stale.MerchantID = "SP-PREVIOUS-ACCOUNT"
+	_, err := s.Set("default", PG, "sandbox", stale, false)
+	require.NoError(t, err)
+	require.NoError(t, s.writeFile(cacheKey("default", PG, "sandbox"), basicCred()))
+
+	got, err := s.Get("default", PG, "sandbox", true)
+	require.NoError(t, err)
+	assert.Equal(t, "SP-1", got.MerchantID)
+
+	got, err = s.Get("default", PG, "sandbox", false)
+	require.NoError(t, err)
+	assert.Equal(t, "SP-PREVIOUS-ACCOUNT", got.MerchantID, "a keychain profile still reads the keychain first")
 }

@@ -23,7 +23,7 @@ and transactions, and receive balance-change notifications.
 
 Use ` + "`sepay bank-account`" + ` and ` + "`sepay transaction`" + ` when the account is your own.
 Bank Hub runs on its own host with a short-lived credential the CLI re-mints for
-you (` + "`sepay bankhub auth`" + `). Endpoint reference: ` + "`sepay docs api`" + `.`,
+you (` + "`sepay bankhub auth`" + `). Endpoint reference: https://developer.sepay.vn/en/bankhub/tong-quan.`,
 		// Product credentials are brokered for the sandbox only.
 		PersistentPreRunE: func(*cobra.Command, []string) error {
 			return f.UseSandbox("bankhub")
@@ -36,7 +36,7 @@ you (` + "`sepay bankhub auth`" + `). Endpoint reference: ` + "`sepay docs api`"
 		newVACmd(f),
 		newTransactionCmd(f),
 		newWebhookCmd(f),
-		newIpnCmd(f),
+		newIPNCmd(f),
 		newLinkTokenCmd(f),
 		newSandboxCmd(f),
 	)
@@ -47,10 +47,10 @@ you (` + "`sepay bankhub auth`" + `). Endpoint reference: ` + "`sepay docs api`"
 
 // newVACmd is a stub: Bank Hub has no /v1/va endpoint; VAs come from `bank-account get`.
 func newVACmd(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "va <command>", Short: "List virtual accounts"}
+	cmd := &cobra.Command{Use: "va <command>", Short: "Bank Hub virtual accounts"}
 	cmd.AddCommand(
 		cmdutil.Stub(&cobra.Command{Use: "list", Aliases: []string{"ls"}, Short: "List virtual accounts", Args: cobra.NoArgs}),
-		cmdutil.Stub(&cobra.Command{Use: "get <id>", Short: "Show a virtual account", Args: cobra.ExactArgs(1)}),
+		cmdutil.Stub(&cobra.Command{Use: "get <va-xid>", Short: "Show a virtual account", Args: cobra.ExactArgs(1)}),
 	)
 	return cmdutil.Stub(cmd)
 }

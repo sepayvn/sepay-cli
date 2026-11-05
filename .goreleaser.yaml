@@ -41,15 +41,23 @@ archives:
     files:
       - src: LICENSE
         info: { mtime: "{{ .CommitDate }}" }
-      - src: README.md
+      - src: README*.md
         info: { mtime: "{{ .CommitDate }}" }
       - src: completions/*
         dst: completions
         info: { mtime: "{{ .CommitDate }}" }
 
+# One SPDX SBOM per archive (syft, installed by the workflow), listed in checksums.txt like the
+# archives, so the signature and the provenance cover it too.
+sboms:
+  - artifacts: archive
 
 checksum:
   name_template: checksums.txt
+  # Listed so `sha256sum -c checksums.txt` covers the install script attached to the release.
+  extra_files:
+    - glob: ./scripts/install.sh
+      name_template: sepay-cli-install.sh
 
 # Keyless signing via cosign (GitHub OIDC) — no stored private key.
 # Signs the checksums file, which covers every artifact.
@@ -70,17 +78,49 @@ release:
   github:
     owner: sepayvn
     name: sepay-cli
-  # release-please creates the GitHub Release (title + notes from CHANGELOG.md);
-  # GoReleaser only attaches the archives and the signed checksums to it. A -rc tag
-  # pushed by hand has no release yet, so GoReleaser creates that one.
-  mode: keep-existing
+  # release-please creates the GitHub Release (title + notes from CHANGELOG.md); GoReleaser
+  # attaches the files and appends the footer below to those notes. A -rc tag pushed by hand
+  # has no release yet, so GoReleaser creates it with the footer alone. Rerunning this job
+  # appends the footer a second time: delete the copy by hand on the release page.
+  mode: append
   draft: false
   # Without this a -rc tag becomes GitHub's "latest" release.
   prerelease: auto
+  # The install script of this release, at releases/download/<tag>/sepay-cli-install.sh (and
+  # releases/latest/download/sepay-cli-install.sh for the newest final release, where the
+  # get.sepay.vn/sepay-cli-install.sh redirect points).
+  extra_files:
+    - glob: ./scripts/install.sh
+      name_template: sepay-cli-install.sh
+  footer: |
+    ## Install
 
-# Homebrew tap and Scoop bucket. Nothing is pushed until PUBLISH_TAPS is "true" (release.yml sets it
-# from the repository variable, after the repository is public); a prerelease is never pushed.
-# TAP_GITHUB_TOKEN is a GitHub App token for those two repositories only: GITHUB_TOKEN cannot write there.
+    ```sh
+    npm install -g sepay-cli@{{ .Version }}
+    curl -fsSL https://github.com/sepayvn/sepay-cli/releases/download/{{ .Tag }}/sepay-cli-install.sh | sh -s -- --version {{ .Version }}
+    ```
+
+    ## Verify
+
+    ```sh
+    # Signature over checksums.txt (keyless, this repository's release workflow)
+    cosign verify-blob checksums.txt \
+      --signature checksums.txt.sig --certificate checksums.txt.pem \
+      --certificate-identity-regexp '^https://github\.com/sepayvn/sepay-cli/\.github/workflows/release\.yml@refs/(heads/main|tags/v.*)$' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    # The files you downloaded against checksums.txt
+    sha256sum -c --ignore-missing checksums.txt
+    {{- if ne (envOrDefault "REPO_PRIVATE" "false") "true" }}
+    # Build provenance of one file
+    gh attestation verify sepay_{{ .Version }}_linux_amd64.tar.gz -R sepayvn/sepay-cli
+    {{- end }}
+    ```
+
+# Homebrew tap and Scoop bucket, pushed by every final release from a public repository.
+# TAP_GITHUB_TOKEN is a GitHub App token for those two repositories only (GITHUB_TOKEN cannot write
+# there); release.yml mints it for exactly those releases, so without it nothing is pushed. A
+# private repository gets no token: its downloads would 404 from the cask and manifest.
+# `auto` still leaves a prerelease out, and a snapshot build (ci.yml npm-package, a local run) never pushes.
 homebrew_casks:
   - name: sepay
     ids: [sepay]
@@ -97,7 +137,7 @@ homebrew_casks:
       email: sepay-cli-releaser[bot]@users.noreply.github.com
       use_github_app_token: true
     commit_msg_template: "chore: sepay {{ .Tag }}"
-    skip_upload: '{{ if eq .Env.PUBLISH_TAPS "true" }}auto{{ else }}true{{ end }}'
+    skip_upload: '{{ if eq (envOrDefault "TAP_GITHUB_TOKEN" "") "" }}true{{ else }}auto{{ end }}'
     completions:
       bash: completions/sepay.bash
       zsh: completions/_sepay
@@ -126,7 +166,7 @@ scoops:
       email: sepay-cli-releaser[bot]@users.noreply.github.com
       use_github_app_token: true
     commit_msg_template: "chore: sepay {{ .Tag }}"
-    skip_upload: '{{ if eq .Env.PUBLISH_TAPS "true" }}auto{{ else }}true{{ end }}'
+    skip_upload: '{{ if eq (envOrDefault "TAP_GITHUB_TOKEN" "") "" }}true{{ else }}auto{{ end }}'
 
 # Release notes come from release-please (CHANGELOG.md), not from GoReleaser.
 changelog:

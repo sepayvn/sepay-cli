@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -159,4 +161,47 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// Why a forward got no answer.
+const (
+	CauseTLS     = "tls"
+	CauseTimeout = "timeout"
+	CauseDown    = "down"
+)
+
+// Unanswered is a forward that got no answer, kept as its cause so the cause survives a session
+// writing it to disk and another reading it back.
+type Unanswered struct{ Cause string }
+
+func (u *Unanswered) Error() string { return "handler gave no answer: " + u.Cause }
+
+// Cause classifies a send error: an untrusted certificate, a slow handler, or one not running.
+func Cause(err error) string {
+	var unanswered *Unanswered
+	var certErr *tls.CertificateVerificationError
+	var unknownCA x509.UnknownAuthorityError
+	var hostErr x509.HostnameError
+	var netErr net.Error
+	switch {
+	case errors.As(err, &unanswered):
+		return unanswered.Cause
+	case errors.As(err, &certErr) || errors.As(err, &unknownCA) || errors.As(err, &hostErr):
+		return CauseTLS
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()):
+		return CauseTimeout
+	}
+	return CauseDown
+}
+
+// Failure says why a forward got no answer, in words for whoever runs the handler. The Go
+// transport error itself is not shown.
+func Failure(err error) string {
+	switch Cause(err) {
+	case CauseTLS:
+		return "failed TLS verification (an untrusted or mismatched certificate)"
+	case CauseTimeout:
+		return "did not answer in time"
+	}
+	return "not responding (is your handler running?)"
 }

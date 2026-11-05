@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: SePay account, transaction or API question
+    url: https://github.com/sepayvn/sepay-cli/blob/main/.github/SUPPORT.md
+    about: Questions that are not about the CLI go to SePay support.
+  - name: Security vulnerability
+    url: https://github.com/sepayvn/sepay-cli/blob/main/SECURITY.md
+    about: Report it privately, never in a public issue.

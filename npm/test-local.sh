@@ -146,7 +146,7 @@ else
 fi
 
 # case 11: an unknown command must exit non-zero
-# `sepay docs exit-codes` documents 2 for "bad flags, bad arguments, unknown command",
+# `sepay help exit-codes` documents 2 for "bad flags, bad arguments, unknown command",
 # and that contract has to survive the shim.
 ./node_modules/.bin/sepay no-such-command >/dev/null 2>&1
 code=$?
@@ -169,7 +169,7 @@ for a in 'a & b' '|pipe|' '^caret^' '"quoted"' '$(echo pwned)' '*' 'a;b' '`id`';
   esc=${a//\\/\\\\}; esc=${esc//\"/\\\"}
   grep -qF -- "unknown command \"$esc\"" <<<"$got" || { bad=$a; break; }
 done
-count=$(./node_modules/.bin/sepay docs 'a & b' '|pipe|' '$(echo pwned)' 2>&1)
+count=$(./node_modules/.bin/sepay config get 'a & b' '|pipe|' '$(echo pwned)' 2>&1)
 if [ -z "$bad" ] && grep -qF -- "received 3" <<<"$count"; then
   record "9-linux" "shell metacharacters in args arrive intact, arg count preserved" PASS "8 metacharacter args + a 3-arg count"
 else

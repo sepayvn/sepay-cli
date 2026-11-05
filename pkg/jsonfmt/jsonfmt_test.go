@@ -64,7 +64,7 @@ func TestStripUnsafe_DropsRawC1AndInvalidBytes(t *testing.T) {
 	tbl := NewTable("V")
 	tbl.AddRow("A\x9bB\x80C") // raw 0x9b (C1 CSI introducer) + lone 0x80
 	var b bytes.Buffer
-	assert.NoError(t, tbl.Render(&b))
+	require.NoError(t, tbl.Render(&b))
 	out := b.String()
 	assert.NotContains(t, out, "\x9b", "raw C1 introducer must be dropped")
 	assert.NotContains(t, out, "\x80", "lone invalid byte must be dropped")
@@ -131,5 +131,5 @@ func TestClean_DropsBidiAndInvisibleFormatKeepsJoinersAndVietnamese(t *testing.T
 func TestRenderJSON_KeepsURLCharacters(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, RenderJSON(&buf, map[string]string{"url": "https://x.example/?a=1&b=<2>"}))
-	assert.Equal(t, "{\n  \"url\": \"https://x.example/?a=1&b=<2>\"\n}\n", buf.String())
+	assert.Equal(t, "{\n  \"url\": \"https://x.example/?a=1&b=<2>\"\n}\n", buf.String()) //nolint:testifylint // the exact bytes are the assertion: indent and no HTML escaping
 }

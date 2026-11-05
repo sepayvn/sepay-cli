@@ -32,7 +32,7 @@ func TestCredential_StringMasksTheTokens(t *testing.T) {
 	c := &Credential{AccessToken: "at_supersecret", RefreshToken: "rt_supersecret", Scope: "read webhook:write"}
 	for _, rendered := range []string{
 		c.String(),
-		fmt.Sprintf("%v", c),
+		fmt.Sprintf("%v", c), //nolint:gocritic // fmt's %v path is what is under test
 		fmt.Sprintf("%v", &ProfileChangedError{Profile: "work", Held: c}),
 		fmt.Errorf("wrapped: %w", &ProfileChangedError{Profile: "work", Held: c}).Error(),
 	} {

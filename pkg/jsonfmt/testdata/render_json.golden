@@ -1,0 +1,9 @@
+{
+  "id": "tx_1",
+  "content": "Thanh toán đơn hàng #42",
+  "url": "https://example.com/hook?a=1&b=<2>",
+  "amount": 100000,
+  "code": null,
+  "tags": [],
+  "metadata": {}
+}

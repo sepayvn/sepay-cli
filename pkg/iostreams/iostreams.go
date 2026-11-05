@@ -22,6 +22,7 @@ type IOStreams struct {
 
 	stdinTTY     bool
 	stdoutTTY    bool
+	stderrTTY    bool
 	colorEnabled bool
 	termWidth    int // fixed by SetTerminalWidth; 0 asks the terminal
 
@@ -44,11 +45,12 @@ func System() *IOStreams {
 		ErrOut:       os.Stderr,
 		stdinTTY:     isTerminal(os.Stdin),
 		stdoutTTY:    stdoutTTY,
+		stderrTTY:    isTerminal(os.Stderr),
 		colorEnabled: stdoutTTY && !envvar.Enabled("NO_COLOR"),
 	}
 }
 
-// Test returns IOStreams backed by buffers for assertions.
+// Test returns IOStreams backed by buffers, for tests in other packages.
 func Test() (*IOStreams, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	in := &bytes.Buffer{}
 	out := &bytes.Buffer{}
@@ -70,9 +72,14 @@ func (s *IOStreams) SetStdinTTY(tty bool) { s.stdinTTY = tty }
 // IsStdoutTTY reports whether stdout is a terminal.
 func (s *IOStreams) IsStdoutTTY() bool { return s.stdoutTTY }
 
-// SetStdoutTTY overrides the detected stdout TTY state. Survey still reads the real stdin, so tests
-// cannot script an answer.
+// SetStdoutTTY overrides the detected stdout TTY state.
 func (s *IOStreams) SetStdoutTTY(tty bool) { s.stdoutTTY = tty }
+
+// IsStderrTTY reports whether stderr is a terminal.
+func (s *IOStreams) IsStderrTTY() bool { return s.stderrTTY }
+
+// SetStderrTTY overrides the detected stderr TTY state.
+func (s *IOStreams) SetStderrTTY(tty bool) { s.stderrTTY = tty }
 
 // CanPrompt reports whether stdin and stdout are both terminals.
 func (s *IOStreams) CanPrompt() bool { return s.stdinTTY && s.stdoutTTY }

@@ -1,6 +1,8 @@
 package cmdutil
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -93,6 +95,87 @@ func TestValidatePaging(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+		})
+	}
+}
+
+func dateRangeCmd(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "x", RunE: func(*cobra.Command, []string) error { return nil }}
+	cmd.Flags().String("from", "", "")
+	cmd.Flags().String("to", "", "")
+	cmd.Flags().String("min", "", "")
+	cmd.Flags().String("max", "", "")
+	require.NoError(t, cmd.ParseFlags(args))
+	return cmd
+}
+
+func TestValidateDateOrder(t *testing.T) {
+	tests := []struct {
+		args    []string
+		wantErr bool
+	}{
+		{[]string{"--from", "2026-11-05", "--to", "2026-11-05"}, false},
+		{[]string{"--from", "2026-11-05 18:00:00", "--to", "2026-11-05"}, false},
+		{[]string{"--from", "2026-11-06", "--to", "2026-11-05"}, true},
+		{[]string{"--from", "2026-11-05 10:00:00", "--to", "2026-11-05 09:59:59"}, true},
+		{[]string{"--from", "2026-11-06 000000", "--to", "2026-11-05 235959"}, true},
+		{[]string{"--from", "2026-11-06"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			err := ValidateDateOrder(dateRangeCmd(t, tt.args...), "from", "to")
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.EqualError(t, err, "--from must not be after --to")
+			assert.Equal(t, ExitUsage, ExitCodeForError(err))
+		})
+	}
+}
+
+func TestValidateAmountOrder(t *testing.T) {
+	require.NoError(t, ValidateAmountOrder(dateRangeCmd(t, "--min", "100", "--max", "100"), "min", "max"))
+	require.NoError(t, ValidateAmountOrder(dateRangeCmd(t, "--min", "100"), "min", "max"))
+	err := ValidateAmountOrder(dateRangeCmd(t, "--min", "200", "--max", "100"), "min", "max")
+	require.EqualError(t, err, "--min must not be greater than --max")
+}
+
+func TestValidateRedirectURL(t *testing.T) {
+	require.NoError(t, ValidateRedirectURL("redirect-uri", "https://shop.test/done"))
+	require.NoError(t, ValidateRedirectURL("redirect-uri", "myapp://linked"))
+	require.EqualError(t, ValidateRedirectURL("redirect-uri", "javascript:alert(1)"), `--redirect-uri scheme "javascript" is not allowed`)
+	require.EqualError(t, ValidateRedirectURL("redirect-uri", "shop.test/done"), `--redirect-uri must include a scheme, e.g. https://example.com/done, got "shop.test/done"`)
+	require.EqualError(t, ValidateRedirectURL("redirect-uri", "localhost:3000/done"), `--redirect-uri must include a scheme, e.g. https://example.com/done, got "localhost:3000/done"`)
+	require.NoError(t, ValidateRedirectURL("redirect-uri", "http://localhost:3000/done"))
+}
+
+func TestValidateRedirectURL_RefusesWhatABrowserWouldRunAnyway(t *testing.T) {
+	for _, v := range []string{
+		"\x01javascript:alert(1)",
+		"java\tscript:alert(1)",
+		"\u00a0javascript:alert(1)",
+		"javascript\x00:alert(1)",
+		" javascript:alert(1)",
+		"1http://x.test",
+		"ja va:x",
+	} {
+		t.Run(fmt.Sprintf("%q", v), func(t *testing.T) {
+			err := ValidateRedirectURL("redirect-uri", v)
+			require.Error(t, err)
+			assert.Equal(t, ExitUsage, ExitCodeForError(err))
+		})
+	}
+	require.NoError(t, ValidateRedirectURL("redirect-uri", "com.shop.app+v2://done"))
+}
+
+func TestValidateRedirectURL_RefusesAControlCharacterAfterTheScheme(t *testing.T) {
+	for _, v := range []string{"https://shop.test/\x1b[2Jdone", "https://shop.test/\x07", "https://shop.test/\x7f"} {
+		t.Run(fmt.Sprintf("%q", v), func(t *testing.T) {
+			err := ValidateRedirectURL("redirect-uri", v)
+			require.Error(t, err)
+			assert.Equal(t, ExitUsage, ExitCodeForError(err))
 		})
 	}
 }

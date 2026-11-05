@@ -39,17 +39,15 @@ func aliasPadding(parent *cobra.Command) int {
 	return width
 }
 
-// usageTemplate is cobra's default plus an [Agent guidance] block, without the second "[command]" usage line,
+// usageTemplate is cobra's default with examples moved after the flags (as gh does) and an
+// [Agent guidance] block last, so flags stay on the first screen; it drops the second "[command]" usage line,
 // and lists aliases: completion offers only Name(), so help is where an alias is discoverable.
 const usageTemplate = `Usage:{{if .Runnable}}
   {{.UseLine}}{{end}}{{if and .HasAvailableSubCommands (not .Runnable)}}
   {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
 
 Aliases:
-  {{.NameAndAliases}}{{end}}{{if .HasExample}}
-
-Examples:
-{{.Example}}{{end}}{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}
+  {{.NameAndAliases}}{{end}}{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}
 
 Available Commands:{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
   {{rpad .NameAndAliases (aliasPad $)}} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}
@@ -58,46 +56,48 @@ Available Commands:{{range $cmds}}{{if (or .IsAvailableCommand (eq .Name "help")
   {{rpad .NameAndAliases (aliasPad $)}} {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
 
 Additional Commands:{{range $cmds}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
-  {{rpad .NameAndAliases (aliasPad $)}} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{agentGuidance .}}{{if .HasAvailableLocalFlags}}
+  {{rpad .NameAndAliases (aliasPad $)}} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
 
 Flags:
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
 
 Global Flags:
-{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasHelpSubCommands}}
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasExample}}
 
-Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+Examples:
+{{.Example}}{{end}}{{agentGuidance .}}{{if .HasHelpSubCommands}}
+
+Help topics (sepay help <topic>):{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
+  {{rpad .Name (aliasPad $)}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
 
 Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
 `
 
+// baseGuidance is the full pointer list root help carries; every subcommand gets moreGuidance instead,
+// so its flags stay on the first screen.
 var baseGuidance = []string{
-	"Run `sepay docs overview` for what SePay is, what this tool does, and which payment path to pick.",
-	"Run `sepay docs glossary` for what pg, bankhub, paycode, va, and quota mean.",
-	"Run `sepay docs flows` for the command order of a task, e.g. receiving a first webhook.",
+	"Run `sepay help glossary` for what pg, bankhub, paycode, va, and quota mean.",
 	"Run `sepay --map=paths` to list every command, `--map=json` for machine-readable metadata.",
-	"Every read/list command supports --json. Exit codes: `sepay docs exit-codes`.",
-	"Writing a notification handler? `sepay docs webhook-payload` (bank transfer) or `sepay docs ipn-payload` (gateway order).",
-	"Writing an app that calls SePay directly instead of through this CLI? `sepay docs api`.",
-	"These topics cover the CLI; platform contracts are linked to developer.sepay.vn — append `.md` to any page to fetch it.",
+	"Every read/list command supports --json. Exit codes: `sepay help exit-codes`; error codes: `sepay help errors`.",
+	"Task guides, webhook and IPN bodies, and the API: https://developer.sepay.vn/en/agents/cli. Append `.md` to any page for Markdown; https://developer.sepay.vn/llms.txt indexes them.",
 }
+
+const moreGuidance = "More: sepay help glossary | exit-codes | errors; sepay --map=paths lists every command."
 
 // envLine states the resolved environment: --env and default_env silently rebase every command.
 func envLine(f *cmdutil.Factory) string {
 	if f.ActiveEnv() == config.EnvProduction {
-		return "Active env: PRODUCTION — commands here hit live money. `--env sandbox` for the safe one."
+		return "Active env: PRODUCTION (real money). Use --env sandbox for the test environment."
 	}
-	return "Active env: sandbox. Add --env production to hit live money."
+	return "Active env: sandbox (no real money). Use --env production for the live environment."
 }
 
-// authLine warns when no profile is stored, since help, --map and docs all work logged out.
+// authLine warns when no profile is stored, since help and --map work logged out.
 func authLine(f *cmdutil.Factory) string {
 	if loggedIn, _ := authState(f); loggedIn {
 		return ""
 	}
-	return "Not logged in: every command that touches data exits 4 until `sepay login` runs. " +
-		"Nothing here has been verified against the backend."
+	return "Not logged in: commands that read or write data exit 4 until you run `sepay login`."
 }
 
 func agentGuidance(cmd *cobra.Command, f *cmdutil.Factory) string {
@@ -105,7 +105,11 @@ func agentGuidance(cmd *cobra.Command, f *cmdutil.Factory) string {
 	if auth := authLine(f); auth != "" {
 		lines = append(lines, auth)
 	}
-	lines = append(lines, baseGuidance...)
+	if cmd.HasParent() {
+		lines = append(lines, moreGuidance)
+	} else {
+		lines = append(lines, baseGuidance...)
+	}
 
 	if cmdutil.Annotation(cmd, cmdutil.AnnEnvs) == "sandbox" {
 		lines = append(lines, "Sandbox-only: this does not work on production.")

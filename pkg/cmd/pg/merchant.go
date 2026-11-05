@@ -24,12 +24,13 @@ type paymentMethod struct {
 func newMerchantCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "merchant <command>",
-		Short: "Payment-gateway merchant info",
+		Short: "Payment Gateway merchant info",
 	}
 	cmd.AddCommand(&cobra.Command{
-		Use:   "show",
-		Short: "Show merchant details",
-		Args:  cobra.NoArgs,
+		Use:     "get",
+		Aliases: []string{"show"},
+		Short:   "Show merchant details",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runMerchantShow(cmd.Context(), f)
 		},
@@ -38,7 +39,6 @@ func newMerchantCmd(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runMerchantShow(ctx context.Context, f *cmdutil.Factory) error {
-
 	client, err := f.NewPGClient()
 	if err != nil {
 		return err

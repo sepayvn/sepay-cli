@@ -7,6 +7,7 @@ import (
 
 	"github.com/sepayvn/sepay-cli/internal/api"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
+	"github.com/sepayvn/sepay-cli/pkg/cmdutil/prompttest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -186,4 +187,73 @@ func TestLinkTokenGet_NoArgNonInteractiveIsUsageError(t *testing.T) {
 	err := run(f, "link-token", "get")
 	require.Error(t, err)
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+}
+
+func TestLinkTokenCreate_UnlinkPicksTheBankAccount(t *testing.T) {
+	var body []byte
+	f, _, _ := testFactory(t, okJSON(brokerBankHubBearer), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/v1/bank-account", r.URL.Path)
+			_, _ = w.Write([]byte(bankAccountList))
+			return
+		}
+		body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"xid":"lt_new","hosted_link_url":"https://link.example/abc","link_token":"tok_abc","expires_at":"2026-07-24 10:00:00"}`))
+	})
+	f.Global.Yes = true
+	prompttest.Use(t, f, prompttest.Step{Label: "Bank account to unlink", Answer: "ACB · 123456 · NGUYEN VAN A"})
+
+	require.NoError(t, run(f, "link-token", "create", "--company", "co_1", "--purpose", "UNLINK_BANK_ACCOUNT"))
+	assert.Contains(t, string(body), `"bank_account_xid":"ba_1"`)
+}
+
+func TestLinkTokenCreate_UnlinkUnattendedNeedsTheFlag(t *testing.T) {
+	f, _, _ := testFactory(t, okJSON(brokerBankHubBearer), func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("must not call Bank Hub without --bank-account")
+	})
+	f.Global.Yes = true
+	err := run(f, "link-token", "create", "--company", "co_1", "--purpose", "UNLINK_BANK_ACCOUNT")
+	require.EqualError(t, err, "--bank-account is required")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+}
+
+func TestLinkTokenCreate_ChecksTheRedirectURI(t *testing.T) {
+	f, _, _ := testFactory(t, okJSON(brokerBankHubBearer), func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("must not create with a script redirect")
+	})
+	f.Global.Yes = true
+	err := run(f, "link-token", "create", "--company", "co_1", "--purpose", "LINK_BANK_ACCOUNT", "--redirect-uri", "javascript:alert(1)")
+	require.EqualError(t, err, `--redirect-uri scheme "javascript" is not allowed`)
+}
+
+func TestLinkTokenCreate_UnlinkListsOnlyTheCompanysAccounts(t *testing.T) {
+	var query string
+	f, _, _ := testFactory(t, okJSON(brokerBankHubBearer), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			query = r.URL.Query().Get("company_xid")
+			_, _ = w.Write([]byte(bankAccountList))
+			return
+		}
+		_, _ = w.Write([]byte(`{"xid":"lt_new","hosted_link_url":"https://link.example/abc","link_token":"tok_abc","expires_at":"2026-07-24 10:00:00"}`))
+	})
+	f.Global.Yes = true
+	prompttest.Use(t, f, prompttest.Step{Label: "Bank account to unlink", Answer: "ACB · 123456 · NGUYEN VAN A"})
+	require.NoError(t, run(f, "link-token", "create", "--company", "co_1", "--purpose", "UNLINK_BANK_ACCOUNT"))
+	assert.Equal(t, "co_1", query)
+}
+
+func TestLinkTokenCreate_UnlinkWithTheFlagAsksNothing(t *testing.T) {
+	var body []byte
+	f, _, _ := testFactory(t, okJSON(brokerBankHubBearer), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			t.Error("must not list accounts when --bank-account names one")
+			return
+		}
+		body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"xid":"lt_new","hosted_link_url":"https://link.example/abc","link_token":"tok_abc","expires_at":"2026-07-24 10:00:00"}`))
+	})
+	f.Global.Yes = true
+	prompttest.Use(t, f)
+	require.NoError(t, run(f, "link-token", "create", "--company", "co_1", "--purpose", "UNLINK_BANK_ACCOUNT", "--bank-account", "ba_7"))
+	assert.Contains(t, string(body), `"bank_account_xid":"ba_7"`)
 }

@@ -27,10 +27,10 @@ type simResult struct {
 func newSandboxCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{Use: "sandbox <command>", Short: "Bank Hub sandbox simulation"}
 
-	linkRequest := &cobra.Command{Use: "link-request <command>", Short: "Accept or reject a sandbox link request"}
+	linkRequest := &cobra.Command{Use: "link-request <command>", Short: "Sandbox link requests"}
 	linkRequest.AddCommand(
-		cmdutil.Stub(&cobra.Command{Use: "accept <id>", Short: "Accept a link request", Args: cobra.ExactArgs(1)}),
-		cmdutil.Stub(&cobra.Command{Use: "reject <id>", Short: "Reject a link request", Args: cobra.ExactArgs(1)}),
+		cmdutil.Stub(&cobra.Command{Use: "accept <link-request-id>", Short: "Accept a link request", Args: cobra.ExactArgs(1)}),
+		cmdutil.Stub(&cobra.Command{Use: "reject <link-request-id>", Short: "Reject a link request", Args: cobra.ExactArgs(1)}),
 	)
 	cmdutil.Stub(linkRequest)
 	cmd.AddCommand(newSimulateTransactionCmd(f), linkRequest)
@@ -43,13 +43,19 @@ func newSimulateTransactionCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "simulate-transaction",
 		Short: "Simulate an inbound transaction on a bank account (sandbox)",
-		Args:  cobra.NoArgs,
+		Long: `Create a sandbox transaction on a linked bank account, as if the bank had
+reported it: credit is money in, debit is money out (--type). Bank Hub then
+notifies over IPN as for a real transfer.
+
+--bank-account, --amount and --content are prompted for on a terminal; required
+otherwise.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			if err := cmdutil.ValidateChoice(cmd, "type", transferTypes); err != nil {
 				return err
 			}
-			ba, err := pickBankAccount(ctx, f, bankAccount, "bank-account", "Select a bank account")
+			ba, err := pickBankAccount(ctx, f, bankAccount, "bank-account", "Select a bank account", "")
 			if err != nil {
 				return err
 			}

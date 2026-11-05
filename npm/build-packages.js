@@ -105,7 +105,8 @@ function verifySignature(requireIt) {
     "--signature",
     sig,
     "--certificate-identity-regexp",
-    "^https://github\\.com/" + REPO + "/\\.github/workflows/",
+    // The identity install.sh pins: the release workflow, on main or a v* tag.
+    "^https://github\\.com/" + REPO + "/\\.github/workflows/release\\.yml@refs/(heads/main|tags/v.*)$",
     "--certificate-oidc-issuer",
     "https://token.actions.githubusercontent.com",
     sums,

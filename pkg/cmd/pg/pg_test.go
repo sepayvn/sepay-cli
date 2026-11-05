@@ -117,6 +117,6 @@ func TestMerchantShow_JSON(t *testing.T) {
 	merchant := `{"payment_methods":[{"payment_method":"CARD","active":"1"}]}`
 	f, out, _ := testFactory(t, okJSON(brokerPGBasic), okJSON(merchant))
 	f.Global.Output = "json"
-	require.NoError(t, run(f, "merchant", "show"))
+	require.NoError(t, run(f, "merchant", "get"))
 	assert.Contains(t, out.String(), `"active": 1`)
 }

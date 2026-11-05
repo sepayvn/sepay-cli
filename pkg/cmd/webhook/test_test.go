@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/sandbox"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +42,7 @@ func apiForTest(t *testing.T, hubURL string, simBody *[]byte, accountIDs ...stri
 			fmt.Fprintf(w, `{"status":"success","data":[%s],"meta":{"pagination":{"total":%d,"per_page":100,"current_page":1,"last_page":1,"has_more":false}}}`,
 				strings.Join(rows, ","), len(accountIDs))
 		default:
-			t.Errorf("unexpected API call: %s %s", r.Method, r.URL.Path)
+			assert.Failf(t, "unexpected request", "unexpected API call: %s %s", r.Method, r.URL.Path)
 		}
 	}
 }
@@ -163,7 +163,42 @@ func TestTest_HandlerDownExit6(t *testing.T) {
 	err := run(cmd, "test", "--forward", addr, "--bank-account", "ba_1", "--amount", "100000")
 	require.Error(t, err)
 	assert.Equal(t, cmdutil.ExitForward, cmdutil.ExitCodeForError(err))
-	assert.Contains(t, errOut.String(), "did not respond")
+	assert.Contains(t, errOut.String(), "handler at "+addr+"/ not responding (is your handler running?)")
+	assert.NotContains(t, errOut.String(), "dial tcp", "the Go transport error is not for the user")
+}
+
+func TestTest_PinHintOnlyWithoutWebhookFlag(t *testing.T) {
+	event := "event: webhook\ndata: {\"id\":\"e1\",\"type\":\"payment_in\",\"webhook_xid\":\"wh_1\",\"payload\":{\"transferAmount\":100000}}\n\n"
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantHint bool
+	}{
+		{"not pinned", nil, true},
+		{"pinned", []string{"--webhook", "wh_1"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer handler.Close()
+			hub := httptest.NewServer(sseHub(t, "event: ready\ndata: {}\n\n", event))
+			defer hub.Close()
+			apiSrv := httptest.NewServer(apiForTest(t, hub.URL, nil))
+			defer apiSrv.Close()
+
+			f, _, errOut := factoryForAPI(apiSrv.URL)
+			args := append([]string{"test", "--forward", handler.URL, "--bank-account", "ba_1", "--amount", "100000"}, tc.args...)
+			err := run(NewCmdWebhook(f), args...)
+			require.Error(t, err)
+			assert.Equal(t, cmdutil.ExitForward, cmdutil.ExitCodeForError(err))
+			if tc.wantHint {
+				assert.Contains(t, errOut.String(), "pin it with --webhook")
+			} else {
+				assert.NotContains(t, errOut.String(), "pin it with --webhook")
+			}
+		})
+	}
 }
 
 func TestTest_JSONResult(t *testing.T) {
@@ -219,7 +254,7 @@ func TestTest_VACreditIsMatchedBySubAccount(t *testing.T) {
 func TestTest_AmountOutOfRangeIsAUsageError(t *testing.T) {
 	for _, amount := range []string{"999", "500000000"} {
 		apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-			t.Errorf("must not call the API with an out-of-range amount: %s", r.URL.Path)
+			assert.Failf(t, "unexpected request", "must not call the API with an out-of-range amount: %s", r.URL.Path)
 		}))
 		f, _, _ := factoryForAPI(apiSrv.URL)
 		cmd := NewCmdWebhook(f)
@@ -235,7 +270,7 @@ func TestTest_AmountOutOfRangeIsAUsageError(t *testing.T) {
 
 func TestTest_UnknownEventIsAUsageError(t *testing.T) {
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		t.Errorf("must not call the API with an unknown event: %s", r.URL.Path)
+		assert.Failf(t, "unexpected request", "must not call the API with an unknown event: %s", r.URL.Path)
 	}))
 	defer apiSrv.Close()
 
@@ -262,12 +297,12 @@ func TestTest_EventFlagHelpMatchesTheAcceptedSet(t *testing.T) {
 		}
 		return
 	}
-	t.Fatal("webhook test command not found")
+	require.Fail(t, "webhook test command not found")
 }
 
 func TestTest_MissingForwardNonInteractive(t *testing.T) {
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		t.Errorf("must not call the API without a forward address: %s", r.URL.Path)
+		assert.Failf(t, "unexpected request", "must not call the API without a forward address: %s", r.URL.Path)
 	}))
 	defer apiSrv.Close()
 
@@ -281,7 +316,7 @@ func TestTest_MissingForwardNonInteractive(t *testing.T) {
 
 func TestTest_RefusesProductionEnv(t *testing.T) {
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		t.Errorf("must not call the API on a production env: %s", r.URL.Path)
+		assert.Failf(t, "unexpected request", "must not call the API on a production env: %s", r.URL.Path)
 	}))
 	defer apiSrv.Close()
 
@@ -310,7 +345,7 @@ func TestTest_RefusesWhenNoWebhookCoversTheAccount(t *testing.T) {
 				`"created_at":""}],"meta":{"pagination":{"total":1,"per_page":100,"current_page":1,` +
 				`"last_page":1,"has_more":false}}}`))
 		case "/transactions/simulate":
-			t.Error("must refuse before creating the transaction")
+			assert.Fail(t, "must refuse before creating the transaction")
 		}
 	}
 
@@ -331,18 +366,32 @@ func TestTestOptions_Matches(t *testing.T) {
 		frame string
 		want  bool
 	}{
-		{"a fired payment_in matches its frame", testOptions{event: eventPaymentIn},
-			`{"type":"payment_in"}`, true},
-		{"a fired payment_in ignores an outgoing frame", testOptions{event: eventPaymentIn},
-			`{"type":"payment_out"}`, false},
-		{"a fired va_credit matches the incoming transfer on its VA", vaCredit,
-			`{"type":"payment_in","payload":{"subAccount":"SBVA1"}}`, true},
-		{"a fired va_credit ignores an outgoing transfer on the same VA", vaCredit,
-			`{"type":"payment_out","payload":{"subAccount":"SBVA1"}}`, false},
-		{"a fired va_credit ignores an incoming transfer on another VA", vaCredit,
-			`{"type":"payment_in","payload":{"subAccount":"SBVA2"}}`, false},
-		{"a fired va_credit ignores a transfer to the account number", vaCredit,
-			`{"type":"payment_in","payload":{}}`, false},
+		{
+			"a fired payment_in matches its frame",
+			testOptions{event: eventPaymentIn},
+			`{"type":"payment_in"}`, true,
+		},
+		{
+			"a fired payment_in ignores an outgoing frame",
+			testOptions{event: eventPaymentIn},
+			`{"type":"payment_out"}`, false,
+		},
+		{
+			"a fired va_credit matches the incoming transfer on its VA", vaCredit,
+			`{"type":"payment_in","payload":{"subAccount":"SBVA1"}}`, true,
+		},
+		{
+			"a fired va_credit ignores an outgoing transfer on the same VA", vaCredit,
+			`{"type":"payment_out","payload":{"subAccount":"SBVA1"}}`, false,
+		},
+		{
+			"a fired va_credit ignores an incoming transfer on another VA", vaCredit,
+			`{"type":"payment_in","payload":{"subAccount":"SBVA2"}}`, false,
+		},
+		{
+			"a fired va_credit ignores a transfer to the account number", vaCredit,
+			`{"type":"payment_in","payload":{}}`, false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,7 +404,7 @@ func TestTestOptions_Matches(t *testing.T) {
 
 func TestTest_VACreditTimeoutNamesADebitOnTheSameVA(t *testing.T) {
 	handler := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("an outgoing transfer must not be forwarded as the fired VA credit")
+		assert.Fail(t, "an outgoing transfer must not be forwarded as the fired VA credit")
 	}))
 	defer handler.Close()
 
@@ -410,7 +459,7 @@ func TestTest_WebhookFlagPinsTheJudgedDelivery(t *testing.T) {
 
 func TestTest_WebhookFlagTimeoutNamesSkippedSiblings(t *testing.T) {
 	handler := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
-		t.Error("a sibling webhook's delivery must not be forwarded")
+		assert.Fail(t, "a sibling webhook's delivery must not be forwarded")
 	}))
 	defer handler.Close()
 
@@ -458,5 +507,5 @@ func TestTest_ForwardsTheSignedRawBody(t *testing.T) {
 	require.NoError(t, run(NewCmdWebhook(f), "test", "--forward", handler.URL,
 		"--bank-account", "ba_1", "--amount", "100000"))
 
-	assert.Equal(t, `{"code":"A","transferAmount":100000}`, string(gotBody))
+	assert.Equal(t, `{"code":"A","transferAmount":100000}`, string(gotBody)) //nolint:testifylint // raw_body is forwarded byte for byte, key order included
 }

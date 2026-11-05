@@ -26,7 +26,7 @@ func TestDebugTransport_logsWithoutCredentials(t *testing.T) {
 	defer slog.SetDefault(prev)
 
 	client := &http.Client{Transport: DebugTransport(nil)}
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/transactions", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/transactions", http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
@@ -42,7 +42,7 @@ func TestDebugTransport_logsWithoutCredentials(t *testing.T) {
 }
 
 func TestDebugTransport_silentBelowDebugLevel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 
 	var logs bytes.Buffer
@@ -51,7 +51,9 @@ func TestDebugTransport_silentBelowDebugLevel(t *testing.T) {
 	defer slog.SetDefault(prev)
 
 	client := &http.Client{Transport: DebugTransport(nil)}
-	resp, err := client.Get(srv.URL)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 

@@ -11,7 +11,7 @@ import (
 	"github.com/sepayvn/sepay-cli/internal/config"
 	"github.com/sepayvn/sepay-cli/internal/keychain"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // knownProducts drives eviction across the product × env matrix: the keychain cannot be listed by prefix.
@@ -57,14 +57,17 @@ func cacheKey(profile, prod, env string) string {
 }
 
 // Get returns the cached credential or ErrNotCached.
-func (s *Store) Get(profile, prod, env string) (*Credential, error) {
+func (s *Store) Get(profile, prod, env string, insecure bool) (*Credential, error) {
 	key := cacheKey(profile, prod, env)
 
-	// A broken keychain falls through to the file.
-	if data, err := s.kr.Get(keyringService, key); err == nil {
-		var c Credential
-		if uerr := json.Unmarshal([]byte(data), &c); uerr == nil {
-			return &c, nil
+	// A profile on file storage never reads the keychain: an entry a login could not evict
+	// there may belong to the label's previous account. A broken keychain falls through to the file.
+	if !insecure {
+		if data, err := s.kr.Get(keyringService, key); err == nil {
+			var c Credential
+			if uerr := json.Unmarshal([]byte(data), &c); uerr == nil {
+				return &c, nil
+			}
 		}
 	}
 
@@ -93,12 +96,12 @@ func (s *Store) Set(profile, prod, env string, c *Credential, insecure bool) (us
 		return true, s.writeFile(key, c)
 	}
 
-	data, err := json.Marshal(c)
+	data, err := json.Marshal(c) //nolint:gosec // G117: serialized into the OS keychain, its intended store
 	if err != nil {
 		return false, err
 	}
 	if err := s.kr.Set(keyringService, key, string(data)); err != nil {
-		return false, fmt.Errorf("%w (%v); to keep it in a 0600 file instead, run: sepay login", ErrKeychainUnavailable, err)
+		return false, fmt.Errorf("%w (%v); to keep it in a 0600 file instead, run: sepay login", ErrKeychainUnavailable, err) //nolint:errorlint // %v: only the sentinel is matched; the cause stays out of errors.Is/As
 	}
 	_ = s.clearFile(key) // drop any stale plaintext copy
 	return false, nil

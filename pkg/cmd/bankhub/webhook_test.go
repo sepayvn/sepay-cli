@@ -24,6 +24,28 @@ func TestWebhookList_ShowsConfig(t *testing.T) {
 	assert.Contains(t, s, "yes")     // active
 }
 
+func TestWebhook_EventsLineSaysNoneWhenNothingIsDelivered(t *testing.T) {
+	for _, c := range []struct{ events, want string }{
+		{`null`, "Events:   none\n"},
+		{`[]`, "Events:   none\n"},
+		{`["*"]`, "Events:   *\n"},
+		{`["LINK_TOKEN_CREATED","LINK_TOKEN_REVOKED"]`, "Events:   LINK_TOKEN_CREATED, LINK_TOKEN_REVOKED\n"},
+	} {
+		resp := `{"data":{"webhook_url":"https://example.com/hook","auth_type":null,"secret_key":null,"request_content_type":"application/json","active":1,"allow_events":` + c.events + `}}`
+		t.Run("list "+c.events, func(t *testing.T) {
+			f, out, _ := testFactory(t, okJSON(brokerBankHubBearer), okJSON(resp))
+			require.NoError(t, run(f, "webhook", "list"))
+			assert.Contains(t, out.String(), c.want)
+		})
+		t.Run("set "+c.events, func(t *testing.T) {
+			f, out, _ := testFactory(t, okJSON(brokerBankHubBearer), okJSON(resp))
+			f.Global.Yes = true
+			require.NoError(t, run(f, "webhook", "set", "https://example.com/hook"))
+			assert.Contains(t, out.String(), c.want)
+		})
+	}
+}
+
 func TestWebhookList_NotConfigured(t *testing.T) {
 	f, out, _ := testFactory(t, okJSON(brokerBankHubBearer), okJSON(`{"data":null}`))
 	require.NoError(t, run(f, "webhook", "list"))

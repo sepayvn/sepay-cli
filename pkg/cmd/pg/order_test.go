@@ -216,7 +216,7 @@ func TestOrderGet_TableMasksUnmaskedPAN(t *testing.T) {
 func TestOrderList_MasksUnmaskedPAN(t *testing.T) {
 	const list = `{"data":[{"id":"u1","order_id":"SEPAY-1","order_invoice_number":"DH1","order_status":"CAPTURED","order_amount":"300000.00","order_currency":"VND","created_at":"2025-09-05 13:31:42","transactions":[{"id":"t1","payment_method":"CARD","transaction_status":"APPROVED","card_number":"4111111111111111"}]}],"meta":{"per_page":20,"total":1,"has_more":false,"current_page":1,"page_count":1}}`
 
-	f, out, _ := testFactory(t, okJSON(brokerPGBasic), func(w http.ResponseWriter, r *http.Request) {
+	f, out, _ := testFactory(t, okJSON(brokerPGBasic), func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(list))
 	})
 	f.Global.Output = "json"
@@ -241,4 +241,35 @@ func TestOrderGet_SanitizesTerminalEscapes(t *testing.T) {
 	assert.Contains(t, s, "CAPTURED")
 	assert.NotContains(t, s, "\x1b]0;")
 	assert.NotContains(t, s, "\x1b[2J")
+}
+
+func TestOrderList_SearchAndQSendTheSameParam(t *testing.T) {
+	for _, name := range []string{"--search", "--q"} {
+		t.Run(name, func(t *testing.T) {
+			var got url.Values
+			f, _, _ := testFactory(t, okJSON(brokerPGBasic), func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Query()
+				_, _ = w.Write([]byte(orderList))
+			})
+			require.NoError(t, run(f, "order", "list", name, "DH1"))
+			assert.Equal(t, "DH1", got.Get("q"))
+		})
+	}
+	f, _, _ := testFactory(t, okJSON(brokerPGBasic), func(http.ResponseWriter, *http.Request) { t.Error("no request expected") })
+	err := run(f, "order", "list", "--search", "a", "--q", "a")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.ErrorContains(t, err, "--search and --q are the same flag; pass one")
+}
+
+func TestOrderList_ReversedRangeFailsBeforeAnyRequest(t *testing.T) {
+	called := false
+	record := func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		_, _ = w.Write([]byte(`{"data":[],"meta":{"total":0}}`))
+	}
+	f, _, _ := testFactory(t, record, record)
+	err := run(f, "order", "list", "--from", "2026-07-10", "--to", "2026-07-01")
+	require.Error(t, err)
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.False(t, called, "a reversed range would return an empty list, not an error")
 }

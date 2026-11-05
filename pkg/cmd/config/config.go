@@ -31,7 +31,13 @@ func NewCmdConfig(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "config <command>",
 		Aliases: []string{"cfg"},
-		Short:   "Read and write persistent CLI settings",
+		Short:   "Persistent CLI settings",
+		Long: `Settings that apply to every command, stored in config.yml (location: sepay help
+environment). default_env picks the environment when --env is not passed; the
+<env>.*_url keys point one product at another host, for testing.
+
+"config get" prints every set value. "config set" with no arguments asks for the
+key and value on a terminal.`,
 	}
 	cmd.AddCommand(newGetCmd(f), newSetCmd(f))
 	return cmd
@@ -39,9 +45,11 @@ func NewCmdConfig(f *cmdutil.Factory) *cobra.Command {
 
 func newGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:               "get [key]",
-		Aliases:           []string{"list", "ls"},
-		Short:             "Print one setting, or all set values",
+		Use:     "get [key]",
+		Aliases: []string{"list", "ls"},
+		Short:   "Print one setting, or all set values",
+		Long: `Print the value of one setting. With no key, print every setting that has a value.
+"sepay config set --help" lists the keys.`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: cmdutil.CompleteFirstArg(cobra.FixedCompletions(settableKeys, cobra.ShellCompDirectiveNoFileComp)),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -80,9 +88,18 @@ func newGetCmd(f *cmdutil.Factory) *cobra.Command {
 
 func newSetCmd(f *cmdutil.Factory) *cobra.Command {
 	return cmdutil.Annotate(&cobra.Command{
-		Use:   "set [key] [value]",
+		Use:   "set <key> <value>",
 		Short: "Set a setting and persist it to config.yml",
-		Args:  cobra.MaximumNArgs(2),
+		Long: `Set one setting in config.yml. Keys:
+  default_env                    sandbox or production; asks to confirm production
+  <env>.api_url                  core API host, where <env> is sandbox or production
+  <env>.pg_api_url, <env>.pg_checkout_url, <env>.bankhub_api_url, <env>.einvoice_api_url
+
+<key> and <value> are prompted for on a terminal; required otherwise. An empty
+value ("") clears the setting.`,
+		Example: `  sepay config set default_env production
+  sepay config set sandbox.api_url http://localhost:8079/api/v2`,
+		Args: cobra.MaximumNArgs(2),
 		ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 			switch {
 			case len(args) == 0:
@@ -112,7 +129,7 @@ func newSetCmd(f *cmdutil.Factory) *cobra.Command {
 			if key == "default_env" && !config.ValidEnv(value) {
 				return &cmdutil.FlagError{Err: fmt.Errorf("default_env must be %s or %s", config.EnvSandbox, config.EnvProduction)}
 			}
-			// A production default silently moves every later command onto live money.
+			// A production default silently moves every later command onto real money.
 			if key == "default_env" && value == config.EnvProduction {
 				if err := f.ConfirmMutation("make production the default environment for every command", true); err != nil {
 					return err
@@ -126,7 +143,7 @@ func newSetCmd(f *cmdutil.Factory) *cobra.Command {
 			return nil
 		},
 	}, map[string]string{
-		cmdutil.AnnGuidance: "`config set default_env production` rebases every later command onto live money with nothing on the command line to show for it. Check `sepay --map=json` active_env after changing it.",
+		cmdutil.AnnGuidance: "`config set default_env production` moves every later command onto production (real money) with nothing on the command line to show for it. Check `sepay --map=json` active_env after changing it.",
 		cmdutil.AnnConfirms: "conditional",
 	})
 }

@@ -46,8 +46,10 @@ func TestNewerThan(t *testing.T) {
 }
 
 func TestParseRejects(t *testing.T) {
-	for _, s := range []string{"dev", "", "1.2", "1.2.3.4", "01.2.3", "1.2.3-", "v1.x.0",
-		"1.2.3-rc..1", "1.2.3-\x1b[2J", "1.2.3-rc\u202e1", "1.2.3-rc 1"} {
+	for _, s := range []string{
+		"dev", "", "1.2", "1.2.3.4", "01.2.3", "1.2.3-", "v1.x.0",
+		"1.2.3-rc..1", "1.2.3-\x1b[2J", "1.2.3-rc\u202e1", "1.2.3-rc 1",
+	} {
 		_, ok := parse(s)
 		assert.False(t, ok, s)
 	}
@@ -61,7 +63,7 @@ func TestCheck_RefusesAVersionThatCarriesTerminalControls(t *testing.T) {
 	c := &Checker{Client: srv.Client(), BaseURL: srv.URL + "/", StatePath: filepath.Join(t.TempDir(), "s.json"), Now: time.Now}
 
 	res, err := c.Check(context.Background(), "0.1.0")
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Empty(t, res.Latest)
 }
 
@@ -93,8 +95,10 @@ func registry(t *testing.T, latest string, deprecated map[string]string, hits *i
 var known = map[string]bool{"0.1.0": true, "0.1.0-rc.1": true, "0.2.0": true, "0.2.0-rc.1": true}
 
 func checker(srv *httptest.Server, dir string, now *time.Time) *Checker {
-	return &Checker{Client: srv.Client(), BaseURL: srv.URL + "/", StatePath: filepath.Join(dir, stateName),
-		Now: func() time.Time { return *now }}
+	return &Checker{
+		Client: srv.Client(), BaseURL: srv.URL + "/", StatePath: filepath.Join(dir, stateName),
+		Now: func() time.Time { return *now },
+	}
 }
 
 func TestCheckAsksOncePerDay(t *testing.T) {
@@ -210,7 +214,7 @@ func TestCheckRegistryFailure(t *testing.T) {
 	c := checker(srv, t.TempDir(), &now)
 
 	got, err := c.Check(context.Background(), "0.1.0")
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Equal(t, Result{}, got)
 	_, statErr := os.Stat(c.StatePath)
 	assert.True(t, os.IsNotExist(statErr), "a failed check is not cached, so the next run retries")
@@ -221,7 +225,7 @@ func TestCheckRejectsGarbageVersion(t *testing.T) {
 	srv := registry(t, "latest", nil, &hits)
 	now := time.Now()
 	got, err := checker(srv, t.TempDir(), &now).Check(context.Background(), "0.1.0")
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Equal(t, Result{}, got)
 }
 

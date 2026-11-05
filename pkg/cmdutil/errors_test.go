@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -65,8 +66,21 @@ func TestHandleError_PrintsMessageAndUsageHint(t *testing.T) {
 	f, errOut := testFactory("table")
 	code := HandleError(f, &FlagError{Err: errors.New("bad flag")})
 	assert.Equal(t, ExitUsage, code)
-	assert.Contains(t, errOut.String(), "Error: bad flag")
-	assert.Contains(t, errOut.String(), "--help")
+	assert.Equal(t, "Error: bad flag\nRun 'sepay --help' for usage.\n", errOut.String())
+}
+
+func TestHandleError_UsageHintNamesTheFailingCommand(t *testing.T) {
+	f, errOut := testFactory("table")
+	f.UsageCommand = "sepay transaction get"
+	assert.Equal(t, ExitUsage, HandleError(f, &FlagError{Err: errors.New("bad flag")}))
+	assert.Equal(t, "Error: bad flag\nRun 'sepay transaction get --help' for usage.\n", errOut.String())
+}
+
+func TestHandleError_JSONEnvelopeHasNoUsageHint(t *testing.T) {
+	f, errOut := testFactory("json")
+	f.UsageCommand = "sepay transaction get"
+	HandleError(f, &FlagError{Err: errors.New("bad flag")})
+	assert.JSONEq(t, `{"status":"error","error_code":"usage_error","message":"bad flag","exit_code":2}`, errOut.String())
 }
 
 func TestHandleError_JSONCarriesCodeAndExit(t *testing.T) {
@@ -292,20 +306,38 @@ func TestErrorMessage_ServerErrorsAreDefined(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{"bare 500", &api.HTTPError{StatusCode: 500},
-			[]string{"SePay had an internal error (HTTP 500)", "contact SePay support"}, []string{"()", "API error"}},
-		{"500 with code and request id",
+		{
+			"bare 500", &api.HTTPError{StatusCode: 500},
+			[]string{"SePay had an internal error (HTTP 500)", "contact SePay support"},
+			[]string{"()", "API error"},
+		},
+		{
+			"500 with code and request id",
 			&api.HTTPError{StatusCode: 500, Code: "webhook_persist_failed", Message: "Đã có lỗi xảy ra, vui lòng thử lại sau.", RequestID: "req_abc123"},
-			[]string{"(code webhook_persist_failed, request id req_abc123)"}, []string{"Đã có lỗi"}},
-		{"internal detail is not relayed",
+			[]string{"(code webhook_persist_failed, request id req_abc123)"},
+			[]string{"Đã có lỗi"},
+		},
+		{
+			"internal detail is not relayed",
 			&api.HTTPError{StatusCode: 500, Message: "SQLSTATE[42S22]: Unknown column 'xid' in field list"},
-			[]string{"internal error (HTTP 500)"}, []string{"SQLSTATE", "xid"}},
-		{"proxy 502", &api.HTTPError{StatusCode: 502, Message: "Bad Gateway"},
-			[]string{"SePay is temporarily unavailable (HTTP 502); retry in a moment"}, []string{"Bad Gateway"}},
-		{"503 with request id", &api.HTTPError{StatusCode: 503, Code: "sse_hub_unavailable", RequestID: "r1"},
-			[]string{"temporarily unavailable (HTTP 503)", "request id r1"}, nil},
-		{"mapped 5xx code keeps its own line", &api.HTTPError{StatusCode: 503, Code: "sse_hub_disabled", Message: "x"},
-			[]string{"switched off on SePay's side"}, []string{"retry in a moment"}},
+			[]string{"internal error (HTTP 500)"},
+			[]string{"SQLSTATE", "xid"},
+		},
+		{
+			"proxy 502", &api.HTTPError{StatusCode: 502, Message: "Bad Gateway"},
+			[]string{"SePay is temporarily unavailable (HTTP 502); retry in a moment"},
+			[]string{"Bad Gateway"},
+		},
+		{
+			"503 with request id", &api.HTTPError{StatusCode: 503, Code: "sse_hub_unavailable", RequestID: "r1"},
+			[]string{"temporarily unavailable (HTTP 503)", "request id r1"},
+			nil,
+		},
+		{
+			"mapped 5xx code keeps its own line", &api.HTTPError{StatusCode: 503, Code: "sse_hub_disabled", Message: "x"},
+			[]string{"switched off on SePay's side"},
+			[]string{"retry in a moment"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := errorMessage(tc.err)
@@ -370,11 +402,33 @@ func TestHandleError_InterruptedJSONEnvelope(t *testing.T) {
 // The server words these in Vietnamese; the CLI speaks English and says what to do next.
 func TestErrorMessage_PaycodeConflictsAreEnglish(t *testing.T) {
 	for code, want := range map[string]string{
-		"paycode_prefix_exists":    "sepay paycode set --structure <prefix>",
+		"paycode_prefix_exists":    "sepay paycode update --structure <prefix>",
 		"paycode_version_conflict": "nothing was saved, run the command again",
 	} {
 		got := errorMessage(&api.HTTPError{StatusCode: 409, Code: code, Message: "Cấu hình mã thanh toán"})
 		assert.Contains(t, got, want, code)
 		assert.NotContains(t, got, "Cấu hình", code)
+	}
+}
+
+// `sepay help errors` documents what HandleError does, so it must name every code the CLI rewords
+// and give the exit code ExitCodeForError returns for the codes that set their own.
+func TestErrorsTopic_MatchesTheCodesTheCLIHandles(t *testing.T) {
+	raw, err := os.ReadFile("../cmd/root/topics/errors.md")
+	require.NoError(t, err)
+	topic := string(raw)
+
+	for code := range apiErrorMessage {
+		assert.Contains(t, topic, "`"+code+"`", "the errors topic does not name %s", code)
+	}
+
+	ownExit := []string{
+		"insufficient_scope", "access_revoked", "otp_required", "feature_disabled", "forbidden",
+		"test_mode_disabled", "sandbox_not_provisioned", "sse_hub_disabled", "quota_exceeded",
+	}
+	for _, code := range ownExit {
+		want := ExitCodeForError(&api.HTTPError{StatusCode: 403, Code: code})
+		row := fmt.Sprintf("| %#q | %d |", code, want)
+		assert.Contains(t, topic, row, "the errors topic gives %s another exit code", code)
 	}
 }

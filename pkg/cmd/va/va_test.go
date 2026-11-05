@@ -162,3 +162,21 @@ func TestRevoke_NeedsConfirmNonInteractive(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 }
+
+func TestList_SearchAndQSendTheSameParam(t *testing.T) {
+	for _, name := range []string{"--search", "--q"} {
+		t.Run(name, func(t *testing.T) {
+			var got url.Values
+			f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Query()
+				_, _ = w.Write([]byte(oneList))
+			})
+			require.NoError(t, run(NewCmdVA(f), "list", "--bank-account", "ba_1", name, "shop"))
+			assert.Equal(t, url.Values{"q": {"shop"}}, got)
+		})
+	}
+	f, _, _ := testFactory(t, func(http.ResponseWriter, *http.Request) { t.Error("no request expected") })
+	err := run(NewCmdVA(f), "list", "--bank-account", "ba_1", "--search", "a", "--q", "a")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.ErrorContains(t, err, "--search and --q are the same flag; pass one")
+}

@@ -3,10 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
+  # No paths-ignore: the main ruleset requires these checks, and a workflow skipped by a path
+  # filter leaves them pending, so a docs-only PR could never merge. Help topics and README text
+  # are also tested (pkg/cmd/root, completion), so docs changes need CI anyway.
   pull_request:
 
 permissions:
   contents: read
+
+# A newer push to the same branch or PR makes the older run moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # release-please reads commit messages on main to pick the next version and write
@@ -14,6 +22,7 @@ jobs:
   pr-title:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       pull-requests: read
     steps:
@@ -35,79 +44,110 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          # Pinned to all three digits. "1.26" floats the patch and the runner takes
-          # whatever it has: two releases 15 minutes apart picked up go1.26.8 then
-          # go1.26.7, so one tag produced two different binaries. Bumping this is a
-          # deliberate decision, not something to leave to chance.
-          go-version: "1.26.10"
-      - name: gofmt
+          # The `go` line of go.mod, all three digits. A floating "1.26" let two
+          # releases 15 minutes apart pick up go1.26.8 then go1.26.7, so one tag produced
+          # two different binaries. Bump Go there, in one place.
+          go-version-file: go.mod
+      # GOTOOLCHAIN=local: otherwise go would fetch the go.mod version on its own and
+      # this check could never fail.
+      - name: Go matches go.mod
+        env:
+          GOTOOLCHAIN: local
         run: |
-          out=$(gofmt -l ./cmd ./pkg ./internal)
-          test -z "$out" || { echo "gofmt needed on:"; echo "$out"; exit 1; }
+          want=$(awk '$1 == "go" {print "go" $2}' go.mod)
+          have=$(go env GOVERSION)
+          if [ "$want" = "go" ] || [ "$have" != "$want" ]; then
+            echo "::error::setup-go installed $have, go.mod says $want."
+            exit 1
+          fi
+      # Same gofumpt as golangci-lint v2.15.0 embeds and the Makefile pins.
+      - name: gofumpt
+        run: |
+          out=$(go run mvdan.cc/gofumpt@v0.12.0 -l ./cmd ./pkg ./internal)
+          test -z "$out" || { echo "gofumpt needed on:"; echo "$out"; exit 1; }
       - name: go mod tidy leaves no diff
-        run: go mod tidy && git diff --exit-code go.mod go.sum
+        run: |
+          go mod tidy && git diff --exit-code go.mod go.sum
+          go -C tools mod tidy && git diff --exit-code tools/go.mod tools/go.sum
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
-          version: v2.12.2
+          version: v2.15.0
       # Runs under alpine's busybox sh too, so POSIX sh is the target, not bash.
       - name: shellcheck install.sh
         run: shellcheck -s sh scripts/install.sh
+      - name: shellcheck npm-bootstrap.sh
+        run: shellcheck scripts/npm-bootstrap.sh # bash, from its shebang
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.26.10" # see the comment at the first declaration
-      - run: go test ./... -race
+          go-version-file: go.mod # see the comment at the first declaration
+      - name: go test
+        run: go test ./... -race ${{ matrix.os == 'ubuntu-latest' && '-coverprofile=coverage.out' || '' }}
+      - name: coverage summary
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '$1 == "total:" { print $NF }')
+          echo "Statement coverage: **$total**" >> "$GITHUB_STEP_SUMMARY"
 
   # Known vulnerabilities in the Go toolchain and the modules we import, reported
   # only when our code can reach them. A red job here means: bump the Go pin
-  # (go-version, here and in release.yml) or the module, then release a patch.
+  # (the `go` line of go.mod) or the module, then release a patch.
   govulncheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.26.10" # see the comment at the first declaration
+          go-version-file: go.mod # see the comment at the first declaration
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+        run: go tool -modfile=tools/go.mod govulncheck ./...
 
-  # The repository is public, so anything committed is published, including every
-  # earlier commit. Scans the full history; a fake credential in a test carries
+  # A public repository publishes every commit of its history, so this scans all of
+  # it; a fake credential in a test carries
   # `// gitleaks:allow` at the end of its line.
   gitleaks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.26.10" # see the comment at the first declaration
+          go-version-file: go.mod # see the comment at the first declaration
       - name: gitleaks
-        run: go run github.com/zricethezav/gitleaks/v8@v8.21.2 git . --redact
+        run: go tool -modfile=tools/go.mod gitleaks git . --redact
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.26.10" # see the comment at the first declaration
+          go-version-file: go.mod # see the comment at the first declaration
       - name: build
         env:
           GOOS: ${{ matrix.goos }}
@@ -118,6 +158,7 @@ jobs:
   # half-releases cannot be taken back cleanly.
   release-config:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
@@ -132,13 +173,14 @@ jobs:
   # go to customers. Dependabot moves them; never by hand.
   npm-package:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # goreleaser needs tags to derive a version
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.26.10" # see the comment at the first declaration
+          go-version-file: go.mod # see the comment at the first declaration
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22.23.4"
@@ -146,9 +188,9 @@ jobs:
       - name: JavaScript syntax
         run: |
           fail=0
-          for f in $(find npm -name '*.js'); do
+          while IFS= read -r f; do
             node --check "$f" || fail=1
-          done
+          done < <(find npm -name '*.js')
           exit $fail
 
       # severity=warning, not the default: the remaining info-level notes are
@@ -184,12 +226,12 @@ jobs:
           # time. Only the templates in the repo are scanned here, since dist/npm does
           # not exist yet; the GENERATED manifests, the ones actually published, are
           # checked by npm/verify.js after the build.
-          for f in $(find npm -name package.json); do
+          while IFS= read -r f; do
             if node -e "process.exit(require('./$f').scripts ? 1 : 0)"; then :; else
               echo "::error::$f declares scripts — no script may run at install time"
               fail=1
             fi
-          done
+          done < <(find npm -name package.json)
           exit $fail
 
       # Build for real before checking. Without this every step below is inspecting an
@@ -198,6 +240,9 @@ jobs:
         with:
           version: "v2.19.0" # pinned: the release job must build with a known GoReleaser
           install-only: true
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.54.0 # same as release.yml
       - name: build the 6 binaries
         run: goreleaser release --clean --snapshot --skip=sign
       - run: node npm/build-packages.js

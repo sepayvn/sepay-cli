@@ -58,6 +58,19 @@ const version = wrapper.version;
 
 check(!!version && version !== "0.0.0", "wrapper version is still 0.0.0 — build did not stamp it");
 check(!wrapper.scripts, "wrapper declares scripts — no script may run at install time");
+
+// The error message and the npm page must send a user to the same documentation.
+const docsInBin = fs
+  .readFileSync(path.join(wrapperDir, "bin", CLI + ".js"), "utf8")
+  .match(/const DOCS = "([^"]+)";/);
+const docsInReadme = fs
+  .readFileSync(path.join(wrapperDir, "README.md"), "utf8")
+  .match(/^Documentation: <([^>]+)>$/m);
+check(
+  !!docsInBin && !!docsInReadme && docsInBin[1] === docsInReadme[1],
+  "bin/" + CLI + ".js and README.md name different documentation URLs: " +
+    (docsInBin ? docsInBin[1] : "none") + " vs " + (docsInReadme ? docsInReadme[1] : "none")
+);
 check(!!wrapper.repository && !!wrapper.repository.url, "wrapper has no repository (needed for provenance)");
 check(
   Array.isArray(wrapper.files) && wrapper.files.length === 1 && wrapper.files[0] === "bin",

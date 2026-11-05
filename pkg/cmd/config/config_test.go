@@ -19,7 +19,7 @@ func testFactory(t *testing.T) (*cmdutil.Factory, *cobra.Command) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
 	ios, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: ios, Global: &cmdutil.GlobalOptions{Output: "table"}}
-	f.Config = func() (*config.Config, error) { return config.Load() }
+	f.Config = config.Load
 	return f, NewCmdConfig(f)
 }
 
@@ -113,7 +113,7 @@ func TestConfigGet_SingleKeyHonoursJSON(t *testing.T) {
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
 	ios, _, out, _ := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: ios, Global: &cmdutil.GlobalOptions{Output: "table"}}
-	f.Config = func() (*config.Config, error) { return config.Load() }
+	f.Config = config.Load
 
 	require.NoError(t, run(NewCmdConfig(f), "set", "default_env", "sandbox"))
 	out.Reset()

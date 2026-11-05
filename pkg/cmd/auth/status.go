@@ -22,7 +22,7 @@ func NewCmdStatus(f *cmdutil.Factory) *cobra.Command {
 	opts := statusOptions{}
 	cmd := &cobra.Command{
 		Use:     "status",
-		Aliases: []string{"st"},
+		Aliases: []string{"st", "ls"},
 		Short:   "View stored profiles and the active one",
 		Long: `List every stored profile (host, granted scopes, active marker) and which
 one is active, with what each one's stored session is still good for. Tokens are
@@ -33,6 +33,8 @@ A session reading "expired, renews on next use" needs nothing from you: the next
 command exchanges the refresh token for a new one. A session revoked from another
 place still reads "ok" until a command is refused; the CLI then renews it, or marks
 it "revoked, run: sepay login" when the server has ended it.`,
+		Example: `  sepay auth status
+  sepay auth status --active --json`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStatus(f, &opts)

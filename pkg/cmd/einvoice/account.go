@@ -32,7 +32,7 @@ type template struct {
 func newAccountCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "account <command>",
-		Short: "Manage e-invoice provider accounts",
+		Short: "E-invoice provider accounts",
 	}
 	cmd.AddCommand(newAccountListCmd(f), newAccountGetCmd(f))
 	return cmd
@@ -44,7 +44,9 @@ func newAccountListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List provider accounts",
-		Args:    cobra.NoArgs,
+		Example: `  sepay einvoice account list
+  sepay einvoice account list --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			query := url.Values{}
 			if page > 0 {
@@ -95,9 +97,12 @@ func runAccountList(ctx context.Context, f *cmdutil.Factory, query url.Values) e
 
 func newAccountGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get [id]",
+		Use:   "get <account-id>",
 		Short: "Show a provider account and its invoice templates",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Show a provider account and the invoice templates it can issue with.
+
+<account-id> is the ID column of "sepay einvoice account list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var arg string
 			if len(args) > 0 {

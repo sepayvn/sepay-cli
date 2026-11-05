@@ -3,12 +3,13 @@ package pg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/iostreams"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/spf13/cobra"
 )
@@ -31,17 +32,17 @@ var (
 // ipnConfig is GET /v2/pg/ipn; SecretKey arrives server-masked.
 type ipnConfig struct {
 	Configured         bool         `json:"configured" yaml:"configured"`
-	IpnURL             string       `json:"ipn_url" yaml:"ipn_url"`
+	IPNURL             string       `json:"ipn_url" yaml:"ipn_url"`
 	AuthType           string       `json:"auth_type" yaml:"auth_type"`
 	RequestContentType string       `json:"request_content_type" yaml:"request_content_type"`
 	SecretKey          string       `json:"secret_key" yaml:"secret_key"`
 	Active             api.FlexBool `json:"active" yaml:"active"`
 }
 
-func newIpnCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ipn <command>",
-		Short: "Gateway IPN: stream it locally, or configure where it goes",
+		Short: "Gateway IPN (instant payment notification): local stream and endpoint",
 		Long: `A paid gateway order reports back over IPN, a channel of its own — not over
 ` + "`sepay webhook`" + `.
 
@@ -49,13 +50,13 @@ Point IPN at your endpoint with ` + "`sepay pg ipn set`" + `, then ` + "`sepay p
 each delivery to a handler on your machine — same body, same headers — so you can
 build against real notifications.
 
-Body reference: ` + "`sepay docs ipn-payload`" + `.`,
+Body reference: https://developer.sepay.vn/en/cong-thanh-toan/IPN.`,
 	}
-	cmd.AddCommand(newIpnListenCmd(f), newIpnGetCmd(f), newIpnSetCmd(f))
-	return cmd
+	cmd.AddCommand(newIPNListenCmd(f), newIPNGetCmd(f), newIPNSetCmd(f))
+	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnHost: cmdutil.HostAPI})
 }
 
-func newIpnListenCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNListenCmd(f *cmdutil.Factory) *cobra.Command {
 	var order string
 	cmd := &cobra.Command{
 		Use:     "listen",
@@ -114,7 +115,7 @@ func ipnListenSource(order string) listen.Source {
 		RevokePath: ipnListenPath,
 		Noun:       "gateway IPN",
 		Scope:      "pg_ipn",
-		Describe:   describeIpnCoverage,
+		Describe:   describeIPNCoverage,
 		Accept:     acceptOrder(order),
 		Tag:        orderTag,
 		// Any HTTP answer is a completed delivery here, and the first retry is due at once.
@@ -122,27 +123,27 @@ func ipnListenSource(order string) listen.Source {
 	}
 }
 
-// describeIpnCoverage warns up front when nothing can arrive. Best-effort.
-func describeIpnCoverage(ctx context.Context, f *cmdutil.Factory) {
+// describeIPNCoverage warns up front when nothing can arrive. Best-effort.
+func describeIPNCoverage(ctx context.Context, f *cmdutil.Factory) {
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return
 	}
-	cfg, err := fetchIpnConfig(ctx, client)
+	cfg, err := fetchIPNConfig(ctx, client)
 
 	out := f.IOStreams.ErrOut
 	switch {
 	case api.IsNotFound(err):
 		// `pg ipn set` answers the same 404, so do not point at it.
 		fmt.Fprintf(out, "! this company has no active Payment Gateway merchant, so no IPN can be configured or delivered\n")
-		fmt.Fprintf(out, "  check it: sepay pg merchant show\n")
+		fmt.Fprintf(out, "  check it: sepay pg merchant get\n")
 	case err != nil:
 	case !cfg.Configured:
 		fmt.Fprintf(out, "! no IPN endpoint configured, so nothing is delivered and nothing reaches this stream\n")
 		fmt.Fprintf(out, "  set one: sepay pg ipn set <url>\n")
 	case !bool(cfg.Active):
 		fmt.Fprintf(out, "! IPN delivery is off, so nothing reaches this stream\n")
-		cmdutil.Fprintf(out, "  turn it on: sepay pg ipn set %s --active\n", cfg.IpnURL)
+		cmdutil.Fprintf(out, "  turn it on: sepay pg ipn set %s --active\n", cfg.IPNURL)
 	}
 }
 
@@ -181,7 +182,7 @@ func orderInvoice(fr listen.Frame) string {
 	return orderID(fr)
 }
 
-func newIpnGetCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:     "get",
 		Aliases: []string{"show"},
@@ -200,18 +201,23 @@ func newIpnGetCmd(f *cmdutil.Factory) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return renderIpnConfig(f, cfg)
+			return renderIPNConfig(f, cfg)
 		},
 	}
 }
 
-func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
+func newIPNSetCmd(f *cmdutil.Factory) *cobra.Command {
 	var secret, authType, contentType string
 	var active bool
 	cmd := &cobra.Command{
-		Use:   "set [url]",
+		Use:   "set <url>",
 		Short: "Set where gateway IPN is delivered",
-		Args:  cmdutil.MaximumNArgs(1),
+		Long: `Set the URL that receives gateway IPN, how SePay authenticates each delivery
+(--auth-type, --secret) and its body format (--content-type). On a terminal the
+current URL is shown before the prompt.
+
+<url> must be publicly reachable. Prompted for on a terminal; required otherwise.`,
+		Args: cmdutil.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// The server answers a bad enum with a retryable 422, so check before the write.
 			if err := cmdutil.ValidateChoices(cmd, map[string][]string{
@@ -220,18 +226,31 @@ func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
 			}); err != nil {
 				return err
 			}
+			// A flag mistake fails before the read and the URL prompt.
+			if err := checkIPNAuthFlags(cmd, authType); err != nil {
+				return err
+			}
 			client, err := f.NewAPIClient()
 			if err != nil {
 				return err
 			}
-			current := readIpnConfig(cmd.Context(), client)
+			current, readErr := fetchIPNConfig(cmd.Context(), client)
+			// A 404 is a known "nothing stored"; any other failure leaves the stored secret unknown.
+			storedKnown := readErr == nil || api.IsNotFound(readErr)
+			if readErr != nil {
+				current = ipnConfig{}
+			}
+			if authType == "SECRET_KEY" && cmd.Flags().Changed("auth-type") && !cmd.Flags().Changed("secret") &&
+				storedKnown && current.SecretKey == "" {
+				return &cmdutil.FlagError{Err: errors.New("--auth-type SECRET_KEY needs --secret: no secret is stored yet")}
+			}
 
 			var arg string
 			if len(args) > 0 {
 				arg = args[0]
 			}
 			if arg == "" && current.Configured && f.CanPrompt() {
-				f.ErrPrintf("%s\n", f.IOStreams.Dim("current: "+current.IpnURL))
+				f.ErrPrintf("%s\n", f.IOStreams.Dim("current: "+current.IPNURL))
 			}
 			url, err := f.InputOrArg(arg, "an IPN URL", "IPN URL")
 			if err != nil {
@@ -259,7 +278,7 @@ func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
 			if cmd.Flags().Changed("active") {
 				body["active"] = boolToInt(active)
 			}
-			if err := promptIpnAuth(f, cmd, body, current); err != nil {
+			if err := promptIPNAuth(f, cmd, body, current, storedKnown); err != nil {
 				return err
 			}
 
@@ -277,7 +296,7 @@ func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
 			}
 			// POST echoes are not masked like the GET.
 			cfg.SecretKey = cmdutil.MaskSecret(cfg.SecretKey)
-			return renderIpnConfig(f, cfg)
+			return renderIPNConfig(f, cfg)
 		},
 	}
 	fl := cmd.Flags()
@@ -293,9 +312,32 @@ func newIpnSetCmd(f *cmdutil.Factory) *cobra.Command {
 	})
 }
 
-// promptIpnAuth asks for the delivery auth, reading the secret without echo.
-func promptIpnAuth(f *cmdutil.Factory, cmd *cobra.Command, body map[string]any, current ipnConfig) error {
+// checkIPNAuthFlags refuses auth flags that cannot work together: a secret with auth turned off,
+// or an empty secret. SECRET_KEY with no secret needs the stored config and is checked after it.
+func checkIPNAuthFlags(cmd *cobra.Command, authType string) error {
+	fl := cmd.Flags()
+	secretGiven := fl.Changed("secret")
+	if secret, _ := fl.GetString("secret"); secretGiven && secret == "" {
+		return &cmdutil.FlagError{Err: errors.New(`--secret cannot be empty; pass --auth-type "" to turn auth off`)}
+	}
+	if !fl.Changed("auth-type") {
+		return nil
+	}
+	if authType == "" && secretGiven {
+		return &cmdutil.FlagError{Err: errors.New(`--secret cannot be used with --auth-type "", which turns auth off`)}
+	}
+	return nil
+}
+
+// promptIPNAuth asks for the delivery auth, reading the secret without echo. With the stored
+// config unread it asks nothing and sends no auth, so the server keeps what it has.
+func promptIPNAuth(f *cmdutil.Factory, cmd *cobra.Command, body map[string]any, current ipnConfig, readOK bool) error {
 	if cmd.Flags().Changed("secret") || cmd.Flags().Changed("auth-type") || !f.CanPrompt() {
+		return nil
+	}
+	if !readOK {
+		fmt.Fprintf(f.IOStreams.ErrOut, "%s\n",
+			f.IOStreams.Dim("could not read the current config; keeping the stored auth (pass --secret or --auth-type to change it)"))
 		return nil
 	}
 
@@ -335,17 +377,8 @@ func promptIpnAuth(f *cmdutil.Factory, cmd *cobra.Command, body map[string]any, 
 	return nil
 }
 
-// readIpnConfig is fetchIpnConfig that treats any failure as unset.
-func readIpnConfig(ctx context.Context, client *api.Client) ipnConfig {
-	cfg, err := fetchIpnConfig(ctx, client)
-	if err != nil {
-		return ipnConfig{}
-	}
-	return cfg
-}
-
-// fetchIpnConfig returns the error so callers can tell no IPN row from no PG merchant.
-func fetchIpnConfig(ctx context.Context, client *api.Client) (ipnConfig, error) {
+// fetchIPNConfig returns the error so callers can tell no IPN row from no PG merchant.
+func fetchIPNConfig(ctx context.Context, client *api.Client) (ipnConfig, error) {
 	env, err := client.Get(ctx, ipnPath, nil)
 	if err != nil {
 		return ipnConfig{}, err
@@ -353,7 +386,7 @@ func fetchIpnConfig(ctx context.Context, client *api.Client) (ipnConfig, error) 
 	return api.DataInto[ipnConfig](env)
 }
 
-func renderIpnConfig(f *cmdutil.Factory, cfg ipnConfig) error {
+func renderIPNConfig(f *cmdutil.Factory, cfg ipnConfig) error {
 	return f.RenderOutput(cfg, func() error {
 		if !cfg.Configured {
 			fmt.Fprintf(f.IOStreams.Out,
@@ -366,7 +399,7 @@ func renderIpnConfig(f *cmdutil.Factory, cfg ipnConfig) error {
 		}
 		f.Printf(
 			"URL:      %s\nAuth:     %s\nContent:  %s\nSecret:   %s\nActive:   %s\n",
-			cfg.IpnURL, cfg.AuthType, cfg.RequestContentType, secret, f.YesNo(bool(cfg.Active)))
+			cfg.IPNURL, cfg.AuthType, cfg.RequestContentType, secret, f.YesNo(bool(cfg.Active)))
 		return nil
 	})
 }

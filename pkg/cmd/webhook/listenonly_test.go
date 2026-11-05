@@ -31,7 +31,7 @@ func TestCreate_ListenOnlySendsModeAndNoURL(t *testing.T) {
 }
 
 func TestCreate_ListenOnlyWithURLIsAUsageError(t *testing.T) {
-	f, _, _ := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("the API must not be called for a usage error")
 	})
 
@@ -42,7 +42,7 @@ func TestCreate_ListenOnlyWithURLIsAUsageError(t *testing.T) {
 
 // The picker can also turn listen-only on; this pins the flag path.
 func TestCreate_ListenOnlyWithOAuth2IsAUsageError(t *testing.T) {
-	f, _, _ := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("the API must not be called for a usage error")
 	})
 
@@ -52,7 +52,7 @@ func TestCreate_ListenOnlyWithOAuth2IsAUsageError(t *testing.T) {
 }
 
 func TestCreate_ListenOnlyRefusesProductionEnv(t *testing.T) {
-	f, _, _ := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("the API must not be called when the env is refused")
 	})
 	f.Global.Env = config.EnvProduction

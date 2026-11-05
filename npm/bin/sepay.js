@@ -38,7 +38,7 @@ const SUPPORTED = [
   "win32-arm64",
 ];
 
-const DOCS = "https://developer.sepay.vn/vi/agents/cli";
+const DOCS = "https://developer.sepay.vn/en/agents/cli";
 
 // Message style: English, no colour, lowercase right after
 // "Error:", detail lines indented two spaces, everything on stderr.
@@ -297,7 +297,7 @@ function main() {
 
   // Pass the exit code through. Getting this wrong means a customer's CI reports
   // success while the command failed — with a payments CLI that is the worst kind of
-  // bug. `sepay docs exit-codes` is the contract this preserves.
+  // bug. `sepay help exit-codes` is the contract this preserves.
   child.on("exit", function (code, signal) {
     if (signal) {
       const num = os.constants.signals[signal];

@@ -182,7 +182,7 @@ func TestList_FieldsRejectsUnknownColumn(t *testing.T) {
 
 	err := run(NewCmdTransaction(f), "list", "--fields", "id,amount_inn")
 	require.Error(t, err)
-	assert.EqualError(t, err, `--fields has no column "amount_inn"`)
+	require.EqualError(t, err, `--fields has no column "amount_inn"`)
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 	assert.False(t, called, "no request may be sent")
 	assert.Empty(t, out.String())
@@ -238,7 +238,7 @@ func TestGet_EmptyXIDIsAUsageError(t *testing.T) {
 
 	err := run(NewCmdTransaction(f), "get", "")
 	require.Error(t, err)
-	assert.EqualError(t, err, "a transaction xid is required")
+	require.EqualError(t, err, "a transaction xid is required")
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 	assert.False(t, called, "no request may leave the machine")
 	assert.Empty(t, out.String())
@@ -300,4 +300,88 @@ func TestTransaction_AbsentAmountInIsNullNotZero(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"tx_1","transfer_type":"in","amount_in":0}`), &zero))
 	require.NotNil(t, zero.AmountIn, "a real zero must stay a real zero")
 	assert.Equal(t, int64(0), *zero.AmountIn)
+}
+
+// The renamed flags must reach the API exactly as the old spellings did.
+func TestList_RenamedFlagsSendTheSameParam(t *testing.T) {
+	for _, tc := range []struct{ flag, old, param, value string }{
+		{"--search", "--q", "q", "abc"},
+		{"--bank-account", "--bank-account-id", "bank_account_id", "ba_9"},
+		{"--va-xid", "--va-id", "va_id", "va_9"},
+		{"--bank", "--bank-brand-name", "bank_brand_name", "ACB"},
+		{"--from", "--transaction-date-from", "transaction_date_from", "2026-07-01"},
+		{"--to", "--transaction-date-to", "transaction_date_to", "2026-07-31 18:00:00"},
+	} {
+		for _, name := range []string{tc.flag, tc.old} {
+			t.Run(name, func(t *testing.T) {
+				var got url.Values
+				f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+					got = r.URL.Query()
+					_, _ = w.Write([]byte(oneTxList))
+				})
+				require.NoError(t, run(NewCmdTransaction(f), "list", name, tc.value))
+				assert.Equal(t, url.Values{tc.param: {tc.value}}, got)
+			})
+		}
+		t.Run(tc.flag+" and "+tc.old, func(t *testing.T) {
+			f, _, _ := testFactory(t, func(http.ResponseWriter, *http.Request) {
+				t.Error("no request expected")
+			})
+			err := run(NewCmdTransaction(f), "list", tc.flag, tc.value, tc.old, tc.value)
+			require.Error(t, err)
+			assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+			assert.Contains(t, err.Error(), tc.flag+" and "+tc.old+" are the same flag; pass one")
+		})
+	}
+}
+
+func TestList_BareEndDateCoversTheWholeDay(t *testing.T) {
+	cases := []struct{ flag, value, want string }{
+		{"--to", "2026-10-20", "2026-10-20 23:59:59"},
+		{"--transaction-date-to", "2026-10-20", "2026-10-20 23:59:59"},
+		{"--to", "2026-10-20 12:00:00", "2026-10-20 12:00:00"},
+		{"--to", "2026-10-20T12:00:00+07:00", "2026-10-20 12:00:00"},
+	}
+	for _, c := range cases {
+		t.Run(c.flag+" "+c.value, func(t *testing.T) {
+			var got url.Values
+			f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Query()
+				_, _ = w.Write([]byte(oneTxList))
+			})
+			require.NoError(t, run(NewCmdTransaction(f), "list", "--from", "2026-10-20", c.flag, c.value))
+			assert.Equal(t, "2026-10-20", got.Get("transaction_date_from"))
+			assert.Equal(t, c.want, got.Get("transaction_date_to"))
+		})
+	}
+}
+
+func TestList_RenamedFlagsHideTheOldSpelling(t *testing.T) {
+	f, _, _ := testFactory(t, okJSON(oneTxList))
+	cmd := NewCmdTransaction(f)
+	list, _, err := cmd.Find([]string{"list"})
+	require.NoError(t, err)
+	for _, old := range []string{"q", "bank-account-id", "va-id", "bank-brand-name", "transaction-date-from", "transaction-date-to"} {
+		assert.True(t, list.Flags().Lookup(old).Hidden, old)
+	}
+}
+
+func TestList_RefusesReversedRangesBeforeAsking(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--from", "2026-11-06", "--to", "2026-11-05"}, "--from must not be after --to"},
+		{[]string{"--transaction-date-from", "2026-11-06", "--transaction-date-to", "2026-11-05"}, "--transaction-date-from must not be after --transaction-date-to"},
+		{[]string{"--amount-in-min", "500", "--amount-in-max", "100"}, "--amount-in-min must not be greater than --amount-in-max"},
+		{[]string{"--amount-out-min", "500", "--amount-out-max", "100"}, "--amount-out-min must not be greater than --amount-out-max"},
+	}
+	for _, c := range cases {
+		f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
+			t.Error("a reversed range must not reach the server")
+		})
+		err := run(NewCmdTransaction(f), append([]string{"list"}, c.args...)...)
+		require.EqualError(t, err, c.want)
+		assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	}
 }

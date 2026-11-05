@@ -41,7 +41,7 @@ type va struct {
 }
 
 func newBankAccountCmd(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "bank-account <command>", Aliases: []string{"ba"}, Short: "List linked bank accounts"}
+	cmd := &cobra.Command{Use: "bank-account <command>", Aliases: []string{"ba"}, Short: "Bank accounts linked by Bank Hub companies"}
 	cmd.AddCommand(newBankAccountListCmd(f), newBankAccountGetCmd(f))
 	return cmd
 }
@@ -53,7 +53,14 @@ func newBankAccountListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List linked bank accounts",
-		Args:    cobra.NoArgs,
+		Long: `List the bank accounts merchants linked through Bank Hub, for every company or
+one (--company). An account appears once its merchant finishes the hosted linking
+page.
+
+The XID column is what "bankhub bank-account get" and --bank-account take.`,
+		Example: `  sepay bankhub bank-account list --company <company-xid>
+  sepay bankhub bank-account list --search 0123456789 --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			query := url.Values{}
 			for param, val := range map[string]string{
@@ -71,13 +78,19 @@ func newBankAccountListCmd(f *cmdutil.Factory) *cobra.Command {
 			if perPage > 0 {
 				query.Set("per_page", strconv.Itoa(perPage))
 			}
+			if bank != "" {
+				if n, err := strconv.Atoi(bank); err != nil || n < 1 {
+					return &cmdutil.FlagError{Err: fmt.Errorf("--bank takes a Bank Hub bank id (a number), got %q; it is not a bank code", bank)}
+				}
+			}
 			return runBankAccountList(cmd.Context(), f, query)
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&company, "company", "", "Filter by company xid")
-	fl.StringVar(&bank, "bank", "", "Filter by bank id")
-	fl.StringVar(&q, "q", "", "Search bank accounts")
+	fl.StringVar(&bank, "bank", "", "Filter by Bank Hub bank id (a number, not a bank code)")
+	fl.StringVar(&q, "search", "", "Search bank accounts")
+	cmdutil.AliasFlag(fl, "q", "search")
 	fl.IntVar(&page, "page", 0, "Page number")
 	fl.IntVar(&perPage, "per-page", 0, "Rows per page (max 100)")
 	return cmd
@@ -120,15 +133,18 @@ func runBankAccountList(ctx context.Context, f *cmdutil.Factory, query url.Value
 
 func newBankAccountGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get [xid]",
+		Use:   "get <bank-account-xid>",
 		Short: "Show a bank account and its virtual accounts",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Show one linked bank account and the virtual accounts under it.
+
+<bank-account-xid> is the XID column of "sepay bankhub bank-account list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var arg string
 			if len(args) > 0 {
 				arg = args[0]
 			}
-			xid, err := pickBankAccount(cmd.Context(), f, arg, "", "Select a bank account")
+			xid, err := pickBankAccount(cmd.Context(), f, arg, "", "Select a bank account", "")
 			if err != nil {
 				return err
 			}

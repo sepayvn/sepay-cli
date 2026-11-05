@@ -51,6 +51,11 @@ creates its own profile; keep several side by side and switch with
 server returns no identity — which a --with-token exchange often does not — the
 profile is named "default" and the EMAIL column stays empty, so pass --profile
 there if you keep more than one.`,
+		Example: `  # approve a device code in the browser
+  sepay login
+
+  # CI or a container: no browser, token from stdin, kept in a 0600 file
+  sepay login --with-token --insecure-storage < token.txt`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts.scopesSet = cmd.Flags().Changed("scopes")

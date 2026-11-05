@@ -25,5 +25,5 @@ func OpenBrowser(rawURL string) bool {
 	if _, err := exec.LookPath(name); err != nil {
 		return false
 	}
-	return exec.Command(name, append(args, rawURL)...).Start() == nil
+	return exec.Command(name, append(args, rawURL)...).Start() == nil //nolint:gosec,noctx // G204: fixed launcher, the http(s) URL is one argv entry; it must outlive the command
 }

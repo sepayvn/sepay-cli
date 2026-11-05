@@ -2,7 +2,6 @@ package sse_test
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +11,9 @@ import (
 
 	"github.com/sepayvn/sepay-cli/internal/api"
 	"github.com/sepayvn/sepay-cli/internal/sse"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStream_EventTooLarge(t *testing.T) {
@@ -21,14 +23,11 @@ func TestStream_EventTooLarge(t *testing.T) {
 	defer srv.Close()
 
 	stream, err := sse.NewClient().Open(context.Background(), srv.URL, "lk_test", time.Second)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = stream.Close() }()
 
-	if _, err := stream.Read(context.Background()); !errors.Is(err, sse.ErrEventTooLarge) {
-		t.Fatalf("Read err = %v, want ErrEventTooLarge", err)
-	}
+	_, err = stream.Read(context.Background())
+	assert.ErrorIs(t, err, sse.ErrEventTooLarge)
 }
 
 // streamHandler writes raw SSE text, then optionally holds the connection until the client leaves.
@@ -54,28 +53,21 @@ func TestStream_ReadsEventsThenEOF(t *testing.T) {
 
 	c := sse.NewClient()
 	stream, err := c.Open(context.Background(), srv.URL, "lk_test", time.Second)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = stream.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	ready, err := stream.Read(ctx)
-	if err != nil || ready.Name != "ready" {
-		t.Fatalf("first read = (%q, %v), want ready", ready.Name, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "ready", ready.Name)
 	hook, err := stream.Read(ctx)
-	if err != nil || hook.Name != "webhook" {
-		t.Fatalf("second read = (%q, %v), want webhook", hook.Name, err)
-	}
-	if string(hook.Data) != `{"type":"payment_in"}` {
-		t.Fatalf("webhook data = %q", hook.Data)
-	}
-	if _, err := stream.Read(ctx); !errors.Is(err, io.EOF) {
-		t.Fatalf("third read err = %v, want io.EOF", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "webhook", hook.Name)
+	assert.Equal(t, `{"type":"payment_in"}`, string(hook.Data)) //nolint:testifylint // data passes through byte for byte
+	_, err = stream.Read(ctx)
+	assert.ErrorIs(t, err, io.EOF)
 }
 
 func TestStream_SkipsHeartbeat(t *testing.T) {
@@ -84,18 +76,15 @@ func TestStream_SkipsHeartbeat(t *testing.T) {
 	defer srv.Close()
 
 	stream, err := sse.NewClient().Open(context.Background(), srv.URL, "lk_test", time.Second)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = stream.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	ev, err := stream.Read(ctx)
-	if err != nil || ev.Name != "webhook" {
-		t.Fatalf("read = (%q, %v), want webhook (heartbeat skipped)", ev.Name, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "webhook", ev.Name, "heartbeat skipped")
 }
 
 func TestStream_HeartbeatTimeout(t *testing.T) {
@@ -103,17 +92,14 @@ func TestStream_HeartbeatTimeout(t *testing.T) {
 	defer srv.Close()
 
 	stream, err := sse.NewClient().Open(context.Background(), srv.URL, "lk_test", 20*time.Millisecond)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = stream.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if _, err := stream.Read(ctx); !errors.Is(err, sse.ErrHeartbeatTimeout) {
-		t.Fatalf("read err = %v, want ErrHeartbeatTimeout", err)
-	}
+	_, err = stream.Read(ctx)
+	assert.ErrorIs(t, err, sse.ErrHeartbeatTimeout)
 }
 
 func TestOpen_StatusErrors(t *testing.T) {
@@ -127,6 +113,8 @@ func TestOpen_StatusErrors(t *testing.T) {
 		{"forbidden", http.StatusForbidden, `{"status":"error","error_code":"insufficient_scope"}`, ""},
 		{"rate limited", http.StatusTooManyRequests, "", "3"},
 		{"unavailable", http.StatusServiceUnavailable, "", "5"},
+		{"bad gateway", http.StatusBadGateway, "<html>502</html>", ""},
+		{"gateway timeout", http.StatusGatewayTimeout, "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -140,26 +128,22 @@ func TestOpen_StatusErrors(t *testing.T) {
 			defer srv.Close()
 
 			_, err := sse.NewClient().Open(context.Background(), srv.URL, "lk_test", time.Second)
-			if err == nil {
-				t.Fatal("Open err = nil, want error")
-			}
+			require.Error(t, err)
 
 			switch tt.status {
 			case http.StatusUnauthorized:
 				var kr *sse.KeyRefusedError
-				if !errors.As(err, &kr) || kr.StatusCode != tt.status {
-					t.Fatalf("err = %v, want *KeyRefusedError %d", err, tt.status)
-				}
+				require.ErrorAs(t, err, &kr)
+				assert.Equal(t, tt.status, kr.StatusCode)
 			case http.StatusForbidden:
 				var he *api.HTTPError
-				if !errors.As(err, &he) || he.StatusCode != tt.status {
-					t.Fatalf("err = %v, want *api.HTTPError %d", err, tt.status)
-				}
+				require.ErrorAs(t, err, &he)
+				assert.Equal(t, tt.status, he.StatusCode)
 			default:
 				var re *sse.RetryableError
-				if !errors.As(err, &re) || re.StatusCode != tt.status || re.RetryAfter != tt.retryAfter {
-					t.Fatalf("err = %v, want *RetryableError %d retry=%q", err, tt.status, tt.retryAfter)
-				}
+				require.ErrorAs(t, err, &re)
+				assert.Equal(t, tt.status, re.StatusCode)
+				assert.Equal(t, tt.retryAfter, re.RetryAfter)
 			}
 		})
 	}
@@ -170,14 +154,11 @@ func TestStream_ContextCancel(t *testing.T) {
 	defer srv.Close()
 
 	stream, err := sse.NewClient().Open(context.Background(), srv.URL, "lk_test", time.Minute)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
+	require.NoError(t, err)
 	defer func() { _ = stream.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := stream.Read(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("read err = %v, want context.Canceled", err)
-	}
+	_, err = stream.Read(ctx)
+	assert.ErrorIs(t, err, context.Canceled)
 }

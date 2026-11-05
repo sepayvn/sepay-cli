@@ -48,9 +48,9 @@ func TestBounded_PassesAnswersThrough(t *testing.T) {
 
 	require.NoError(t, Delete("sepay", "k"))
 	_, err = Get("sepay", "k")
-	assert.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, ErrNotFound)
 
 	keyring.MockInitWithError(errors.New("no secret service"))
-	assert.EqualError(t, Set("sepay", "k", "v"), "no secret service")
+	require.EqualError(t, Set("sepay", "k", "v"), "no secret service")
 	assert.False(t, stuck.Load(), "a keychain that answers with an error is not marked stuck")
 }

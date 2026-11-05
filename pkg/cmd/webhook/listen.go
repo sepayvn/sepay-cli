@@ -5,12 +5,55 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/iostreams"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/spf13/cobra"
 )
+
+func newListenCmd(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "listen",
+		Aliases: []string{"tail"},
+		Short:   "Stream events to a local handler over SSE (sandbox only)",
+		Long: `Hold one outbound SSE stream and POST every webhook delivery to a local handler,
+so an integration can be built without exposing your machine.
+
+Each event carries the same body bytes and the same headers your endpoint just
+received, so your handler runs its real path, including its own signature check.
+Credential headers are replayed to a loopback handler; for any other address they
+are withheld unless you pass ` + "`--forward-credentials`" + `. The signature is always sent.
+
+It runs on sandbox only: a production webhook delivers to its own URL.
+
+It mirrors deliveries, so it needs a webhook that targets the bank account, and it
+reports first attempts and replays only: SePay's own retries never reach the stream.
+Every attempt SePay made is in ` + "`sepay webhook logs`" + `.
+
+A forward your handler fails is re-sent locally on SePay's schedule (` + "`--forward-retries 0`" + `
+delivers once). Those attempts are the CLI's: they replay the original bytes and
+signature, and they end with the session.
+
+Body reference: https://developer.sepay.vn/en/sepay-webhooks/tich-hop-webhook.`,
+		Example: `  # forward every delivery to a local handler
+  sepay webhook listen --forward localhost:3000
+
+  # only money in for one webhook, printing each body
+  sepay webhook listen --forward localhost:3000 --webhook <webhook-xid> --events payment_in --print`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := f.AssertSandboxOnly("webhook listen"); err != nil {
+				return err
+			}
+			return runListen(cmd, f)
+		},
+	}
+	listen.AddFlags(cmd)
+	listen.DescribeEvents(cmd, listenEvents)
+	cmd.Flags().String("webhook", "", "Only forward deliveries of this webhook xid (see: sepay webhook list)")
+	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnEnvs: "sandbox"})
+}
 
 // mintPath mints a webhook listen session for "listen" and "test".
 const mintPath = "/webhooks/listen"
@@ -34,7 +77,7 @@ func runListen(cmd *cobra.Command, f *cmdutil.Factory) error {
 	// retry_conditions only comes with the webhook list.
 	set := fetchWebhookSet(cmd.Context(), f)
 	// Only when retry runs, or this note would contradict the guard's.
-	if set.err != nil && listen.RetryEnabled(f, opts) {
+	if set.err != nil && listen.RetryEnabled(opts) {
 		fmt.Fprintln(f.IOStreams.ErrOut,
 			"note: could not read your webhooks, so only a transport failure is retried")
 	}

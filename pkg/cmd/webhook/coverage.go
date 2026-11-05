@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
-	bankaccount "github.com/sepayvn/sepay-cli/pkg/cmd/bank-account"
+	"github.com/sepayvn/sepay-cli/pkg/cmd/bankaccount"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 )
 
@@ -126,10 +126,10 @@ func (w Webhook) delivers(d delivery) (match, string) {
 
 	if !d.hasCode {
 		if w.SkipIfNoCode {
-			return matchDrops, "its webhook skips events without a payment code, and this event carries none"
+			return matchDrops, "its webhook skips events without a pay code, and this event carries none"
 		}
 		if len(w.PrefixFilters) > 0 {
-			return matchDrops, "its webhook only forwards payment codes starting with " +
+			return matchDrops, "its webhook only forwards pay codes starting with " +
 				strings.Join(w.PrefixFilters, " or ") + ", and this event carries no code"
 		}
 	}
@@ -167,7 +167,7 @@ func deliverable(hooks []Webhook, d delivery) (bool, string) {
 }
 
 // coverageFor reports which streamEvents reach account, else why not. Code filters are ignored:
-// real traffic may carry a payment code.
+// real traffic may carry a pay code.
 func coverageFor(hooks []Webhook, account string) ([]string, string) {
 	var kinds []string
 	reason := ""
@@ -324,7 +324,7 @@ func assertDeliverable(ctx context.Context, client *api.Client, opts testOptions
 	if err != nil {
 		return nil // the check is an aid, not a gate
 	}
-	// webhook test sends no payment code, so skip_if_no_code and prefix filters drop it for certain.
+	// webhook test sends no pay code, so skip_if_no_code and prefix filters drop it for certain.
 	ok, why := deliverable(hooks, delivery{account: opts.bankAccount, event: opts.event})
 	if ok {
 		return nil
@@ -332,7 +332,7 @@ func assertDeliverable(ctx context.Context, client *api.Client, opts testOptions
 	return &cmdutil.FlagError{Err: fmt.Errorf(
 		"this event would not be delivered: %s.\n"+
 			"  A webhook delivers an event only when every filter on it matches: the bank account,\n"+
-			"  the event direction, the virtual-account rules and the payment-code rules.\n"+
+			"  the event direction, the virtual-account rules and the pay code rules.\n"+
 			"  List them with: sepay webhook list\n"+
 			"  Cover every account without sending HTTP anywhere:\n"+
 			"    sepay webhook create --listen-only --bank-mode all", why)}

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // HostsFile is the credential document's name inside the config directory.

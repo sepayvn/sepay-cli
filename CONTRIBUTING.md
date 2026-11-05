@@ -1,43 +1,75 @@
 # Contributing to sepay-cli
 
-`sepay` is the open-source Go CLI for the SePay payment platform.
+`sepay` is the open-source Go CLI for the SePay payment platform. Everyone taking part follows the
+[Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), not
+public issues.
 
-By contributing, you agree that your contributions are licensed under the
-[Apache-2.0 License](LICENSE).
+## Before you start
 
-## Prerequisites
+- Open an issue before a large change (a new command, a new flag on many commands, a changed
+  `--json` schema or exit code) so the design is agreed before you write it. Small fixes and docs
+  can go straight to a PR.
+- Looking for something to pick up? Start with issues labelled `good first issue` or `help wanted`.
+- No CLA, but every commit is signed off under the
+  [Developer Certificate of Origin](https://developercertificate.org/): you certify that you wrote the
+  change or have the right to submit it under [Apache-2.0](LICENSE). Sign off with `git commit -s`,
+  which adds `Signed-off-by: Your Name <you@example.com>` matching your commit author. To sign off
+  commits already on your branch, run `git rebase --signoff main` and force-push.
 
-- [Go](https://go.dev/dl/) **1.25+** (CI and releases build with 1.26.10)
-- Optional (CI runs these): [`golangci-lint`](https://golangci-lint.run/) v2,
-  [`goreleaser`](https://goreleaser.com/) v2.19, Node 22 for the npm channel
+## Setup and the local gate
 
-## Development setup
+You need [Go](https://go.dev/dl/) 1.27.3 or later. With the default `GOTOOLCHAIN=auto`, an older
+Go (1.21+) downloads 1.27.3 itself. Nothing else needs installing: `make check` runs the pinned
+[`golangci-lint`](https://golangci-lint.run/) v2.15.0 and gofumpt through `go run`.
 
 ```bash
 git clone https://github.com/sepayvn/sepay-cli.git
 cd sepay-cli
-make build        # builds ./bin/sepay with version info embedded
-./bin/sepay version
+make build && ./bin/sepay version
+make check        # run before every push
 ```
 
-## Build, test, lint
+`make check` is the gate CI runs: `gofumpt` (fix with `go run mvdan.cc/gofumpt@v0.12.0 -w .`), `go vet`, `golangci-lint`, `go test ./... -race` and a
+`go mod tidy` check that `go.mod`, `go.sum` and `tools/go.mod` are clean. `make leaks` runs gitleaks and
+`make vuln` runs govulncheck; both are pinned in `tools/go.mod`, a module of its own so their
+dependencies never change the binary's.
+`make help` lists every target. Without a C compiler, `-race` cannot build: run `make test RACE=`.
 
-```bash
-gofmt -l ./cmd ./pkg ./internal    # must print nothing
-go mod tidy && git diff --exit-code go.mod go.sum
-go vet ./...
-go test ./... -race
-golangci-lint run                  # optional locally; always runs in CI
-make leaks                         # gitleaks: must print "no leaks found"
-```
+CI runs the tests on Linux, macOS and Windows. A test that depends on Unix file modes skips or guards
+that assertion on Windows, with the reason in the code.
 
-## Coding standards
+Tests do not call `t.Parallel()` on purpose: they set environment variables with `t.Setenv` and point
+the config directory at a temp dir, and both are process-global.
 
-- Code passes `gofmt`, `go vet` and `golangci-lint` (`.golangci.yml`).
-- User-facing CLI strings are English, terse (error strings lowercase, no trailing punctuation).
-- `internal/` is private infrastructure (auth / config / api …); `pkg/` is the command layer.
+JSON output is pinned by golden files in `testdata/*.golden` (helper `internal/golden`). After an
+intended output change, regenerate them one package at a time, e.g. `go test ./pkg/jsonfmt -update`,
+and review the diff.
+
+## Testing against sandbox
+
+`make check` needs no account: tests run against `httptest` servers. To try a change end to end:
+
+1. Create an account at [my.sepay.vn/register](https://my.sepay.vn/register) and turn on
+   [Test mode](https://developer.sepay.vn/en/tien-ich-khac/test-mode) (the sandbox). It is free and
+   moves no real money.
+2. Keep your test login apart from your own: `export SEPAY_CONFIG_DIR=$(mktemp -d)`.
+3. `./bin/sepay login`. Every command uses the sandbox unless you pass `--env production`. No
+   environment variable supplies a token.
+4. `./bin/sepay sandbox init --with-webhook-listen`, then `sandbox simulate`, `webhook listen` and the
+   other commands you changed. `sandbox reset` clears the sandbox.
+
+`sepay help environment` lists every variable the CLI reads, including the per-environment host
+overrides for pointing it at a local backend.
+
+## Code layout and standards
+
+- `cmd/sepay` is the entry point, `pkg/cmd/<noun>` holds the commands (for example
+  `pkg/cmd/bankaccount`), `internal/` holds auth, config, the API clients and `internal/listen`.
   Commands are `NewCmdXxx(f *cmdutil.Factory) *cobra.Command` and take dependencies from the Factory.
-- The CLI ships no secret and calls only the public SePay API (see [SECURITY.md](SECURITY.md)).
+- `pkg/` mirrors the [cli/cli](https://github.com/cli/cli) layout. It is not a stable Go API: do not
+  import it from another module.
+- User-facing strings are English and terse; error strings are lowercase with no trailing punctuation.
+- The CLI ships no secret and calls only the public SePay API.
 
 ## Pull requests
 
@@ -55,71 +87,16 @@ it, so it must follow [Conventional Commits](https://www.conventionalcommits.org
 A breaking change to a command's `--json` schema or an exit code counts as breaking.
 Do not edit `CHANGELOG.md` by hand: release-please writes it.
 
+## Go version policy
+
+`go.mod` says `go 1.27.3`: the floor for every build, `go install` included, is the toolchain that
+CI tests and govulncheck scans. Every workflow reads Go from `go.mod` (`go-version-file`), and a CI
+step fails if the installed Go differs from that line. To bump Go, change only that line.
+
 ## Releasing
 
-Everything happens on GitHub; nobody builds or publishes from a laptop.
-
-1. Every merge to `main` updates one open PR titled **`chore(main): release X.Y.Z`**
-   (version bump in `.release-please-manifest.json` + the new `CHANGELOG.md` section).
-2. To ship: review that PR and **merge it**. The `Release` workflow then
-   - tags `vX.Y.Z` and creates the GitHub Release with the changelog as notes,
-   - builds 6 binaries (linux / darwin / windows × amd64 / arm64) with GoReleaser, signs
-     `checksums.txt` with cosign and attaches everything to the Release,
-   - builds the 7 npm packages from the signed archives, checks them, publishes the 6 platform
-     packages, re-downloads and compares checksums, test-installs, then publishes
-     `sepay-cli` under the **`latest`** dist-tag.
-3. Prerelease (to try a build before releasing it). Take X.Y.Z from the open release PR title:
-   ```bash
-   git tag -a v0.3.0-rc.1 -m v0.3.0-rc.1 origin/main && git push origin v0.3.0-rc.1
-   ```
-   | Tag | npm dist-tag | Meaning |
-   |---|---|---|
-   | `vX.Y.Z-alpha.N` | `alpha` | early, may change a lot |
-   | `vX.Y.Z-beta.N` | `beta` | feature complete, still testing |
-   | `vX.Y.Z-rc.N` | `next` | release candidate: this exact code becomes X.Y.Z |
-
-   → a GitHub prerelease + that npm dist-tag (`npx sepay-cli@next version`). `latest` does not move. Push one tag at a time, never `git push --tags`.
-   The tag must point at a commit of `main`: the workflow refuses any other commit before
-   building anything (it protects against tagging the wrong commit; someone with write access
-   could still edit `release.yml` in that commit, so keep write access to 1–2 people).
-4. Provenance follows the repository visibility (step `provenance must match the repository
-   visibility` in `release.yml`). While the repository is private, leave the repository variable
-   `NPM_PROVENANCE` unset: every release, `latest` included, publishes without provenance (npm
-   refuses `--provenance` from a private repository). Once it is public, set `NPM_PROVENANCE=true`
-   and add required reviewers to the `release` environment; until the variable is set the npm job
-   refuses to publish.
-5. Homebrew (`sepayvn/homebrew-sepay-cli`) and Scoop (`sepayvn/scoop-sepay-cli`) get a new cask / manifest
-   from the same GoReleaser run, only while the repository variable `PUBLISH_TAPS` is `true`, and
-   never for a prerelease. The push uses a GitHub App token minted in `release.yml` (variable
-   `RELEASER_APP_CLIENT_ID`, secret `RELEASER_APP_PRIVATE_KEY`; the App is installed on those two
-   repositories only). Leave `PUBLISH_TAPS` unset until the repository is public: the cask and the
-   manifest point at Release downloads, which a private repository does not serve.
-6. A broken version is never unpublished: fix forward with a new version, and mark the bad one
-   `npm deprecate sepay-cli@X.Y.Z "use X.Y.Z+1"`.
-
-### First-time setup (once per package)
-
-npm only lets a trusted publisher be attached to a package that exists. A new package is created
-with staged publishing, from a maintainer's machine (npm >= 11.15, account with 2FA):
-
-```bash
-npx -y npm@11.21.1 login
-bash scripts/npm-bootstrap.sh     # stage the 7 names, then bind each to release.yml
-```
-
-`npm stage publish` of a name that does not exist creates it with a public placeholder version
-`0.0.0-stage`; the staged content stays private and is never approved. `npm trust github` binds the
-package to `sepayvn/sepay-cli` + `release.yml` with direct publish allowed. No npm token is stored
-in GitHub. A new platform package (a new OS / CPU) needs the same two steps before its first release.
-
-Useful checks:
-
-```bash
-npm view sepay-cli dist-tags
-gh release list --repo sepayvn/sepay-cli
-```
+Maintainers release from GitHub only; see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## License
 
-By submitting a contribution you certify that you have the right to do so and agree to license it
-under Apache-2.0. © Công ty CP SePay.
+Apache-2.0. © Công ty CP SePay.

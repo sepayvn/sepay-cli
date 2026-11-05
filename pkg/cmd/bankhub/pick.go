@@ -31,10 +31,15 @@ func fetchAllCompanies(ctx context.Context, client *ibh.Client) ([]company, erro
 	return all, nil
 }
 
-func fetchAllBankAccounts(ctx context.Context, client *ibh.Client) ([]bankAccount, error) {
+// fetchAllBankAccounts lists the bank accounts, only company's when it is set.
+func fetchAllBankAccounts(ctx context.Context, client *ibh.Client, company string) ([]bankAccount, error) {
 	var all []bankAccount
 	for page := 1; page <= pickerMaxPages; page++ {
-		resp, err := client.Get(ctx, "/v1/bank-account", url.Values{"per_page": {"100"}, "page": {strconv.Itoa(page)}})
+		query := url.Values{"per_page": {"100"}, "page": {strconv.Itoa(page)}}
+		if company != "" {
+			query.Set("company_xid", company)
+		}
+		resp, err := client.Get(ctx, "/v1/bank-account", query)
 		if err != nil {
 			return nil, err
 		}
@@ -79,8 +84,8 @@ func pickCompany(ctx context.Context, f *cmdutil.Factory, val, flag string) (str
 	return f.SelectChoiceOrFlag("", flag, "Select a company", choices)
 }
 
-// pickBankAccount is pickCompany for bank accounts.
-func pickBankAccount(ctx context.Context, f *cmdutil.Factory, val, flag, label string) (string, error) {
+// pickBankAccount is pickCompany for bank accounts; a company narrows the list to its accounts.
+func pickBankAccount(ctx context.Context, f *cmdutil.Factory, val, flag, label, company string) (string, error) {
 	if val != "" {
 		return val, nil
 	}
@@ -94,7 +99,7 @@ func pickBankAccount(ctx context.Context, f *cmdutil.Factory, val, flag, label s
 	if err != nil {
 		return "", err
 	}
-	accts, err := fetchAllBankAccounts(ctx, client)
+	accts, err := fetchAllBankAccounts(ctx, client, company)
 	if err != nil {
 		return "", err
 	}

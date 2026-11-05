@@ -1,0 +1,19 @@
+[
+  {
+    "id": "tx_1",
+    "transaction_date": "2026-02-18 09:35:12",
+    "account_number": "0123456789",
+    "va": null,
+    "transfer_type": "in",
+    "amount_in": 100000,
+    "amount_out": 0,
+    "accumulated": 5000000,
+    "transaction_content": "thanh toan",
+    "reference_number": "FT001",
+    "code": null,
+    "bank_brand_name": "ACB",
+    "bank_account_id": "ba_1",
+    "va_id": null,
+    "webhook_success": 1
+  }
+]

@@ -159,7 +159,7 @@ func TestClient_RefusesRedirectAndNamesTarget(t *testing.T) {
 
 func TestClient_MutationIsNotReplayedOn401(t *testing.T) {
 	var calls int32
-	c, creds := clientTo(t, func(w http.ResponseWriter, r *http.Request) {
+	c, creds := clientTo(t, func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"status":401,"messages":{"error":"Unauthorized"}}`))
@@ -202,8 +202,8 @@ func TestInitCheckout_PostsToCheckoutHostNotAPIHost(t *testing.T) {
 	t.Cleanup(apiSrv.Close)
 	checkoutSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&checkoutHits, 1)
-		require.Equal(t, "/v1/checkout/init", r.URL.Path)
-		require.NoError(t, r.ParseForm())
+		assert.Equal(t, "/v1/checkout/init", r.URL.Path)
+		assert.NoError(t, r.ParseForm())
 		gotAuth = r.Header.Get("Authorization")
 		gotBody = r.PostForm.Get("signature")
 		w.Header().Set("Location", "https://pay-sandbox.sepay.vn/v1/checkout?merchant=SP-1")

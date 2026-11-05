@@ -10,6 +10,10 @@ updates:
     # PR titles must be Conventional Commits (ci.yml pr-title); "ci" never cuts a release.
     commit-message:
       prefix: ci
+    # One PR a week for every action bump instead of one PR per action.
+    groups:
+      actions:
+        patterns: ["*"]
   # Go modules: a PR when a dependency has a new version, and at once for a
   # security fix. "fix" because a dependency bump changes the shipped binary.
   - package-ecosystem: gomod
@@ -19,3 +23,20 @@ updates:
     commit-message:
       prefix: fix
       include: scope
+    # Minor and patch bumps in one PR; a major bump, or a security fix, keeps its own.
+    groups:
+      go-modules:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+  # CI tools (govulncheck, gitleaks) live in their own module so their dependencies
+  # never raise a version the shipped binary uses. "ci": a tool bump ships nothing.
+  - package-ecosystem: gomod
+    directory: "/tools"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      tools:
+        patterns: ["*"]

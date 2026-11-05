@@ -207,7 +207,7 @@ func revokeAccount(ctx context.Context, f *cmdutil.Factory, name, host string) (
 		return errors.Is(gerr, auth.ErrNotFound), err
 	}
 	if rerr := revokeCredential(ctx, f, host, cred); rerr != nil {
-		return false, fmt.Errorf("%w (this machine's token was not revoked either: %v)", err, rerr)
+		return false, fmt.Errorf("%w (this machine's token was not revoked either: %v)", err, rerr) //nolint:errorlint // the exit code follows err, not the revoke failure
 	}
 	return true, err
 }

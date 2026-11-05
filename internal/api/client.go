@@ -30,6 +30,9 @@ const maxBackoff = 60 * time.Second
 // UserAgent identifies the CLI build.
 func UserAgent() string { return "sepay-cli/" + build.Version }
 
+// ErrResponseTooLarge is a body over MaxResponseBytes: the server answered, so a resend would only fetch it again.
+var ErrResponseTooLarge = fmt.Errorf("server response exceeded %d bytes", MaxResponseBytes)
+
 // ReadBody reads and closes a capped response body; a truncated read is an error, not an empty success.
 func ReadBody(resp *http.Response) ([]byte, error) {
 	defer func() { _ = resp.Body.Close() }()
@@ -42,7 +45,7 @@ func ReadBody(resp *http.Response) ([]byte, error) {
 		return nil, NewReadError(host, err)
 	}
 	if len(body) > MaxResponseBytes {
-		return nil, fmt.Errorf("server response exceeded %d bytes", MaxResponseBytes)
+		return nil, ErrResponseTooLarge
 	}
 	return body, nil
 }
@@ -230,7 +233,7 @@ func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptio
 			req.Header[http.CanonicalHeaderKey(name)] = vals
 		}
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.httpClient.Do(req) //nolint:bodyclose // ReadBody closes it
 		if err != nil {
 			err = NewTransportError(req.URL.Host, c.httpClient.Timeout, err)
 			// A transport error leaves the outcome unknown, so retry only when the server can recognise
@@ -250,7 +253,7 @@ func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptio
 		body, err := ReadBody(resp)
 		if err != nil {
 			// A truncated response is equally unknown; the retry replays the memoized answer.
-			if canResend && attempt < c.MaxRetries && ctx.Err() == nil {
+			if canResend && attempt < c.MaxRetries && ctx.Err() == nil && !errors.Is(err, ErrResponseTooLarge) {
 				wait := Backoff("", attempt)
 				c.logRetry(err, wait, attempt)
 				select {

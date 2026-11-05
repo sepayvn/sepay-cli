@@ -15,23 +15,32 @@ func NewCmdCompletion(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "completion <bash|zsh|fish|powershell>",
 		Short: "Generate a shell completion script",
-		Long: `Generate a completion script for the given shell.
+		Long: `Generate a completion script for the given shell and print it on stdout.
 
-Bash:
-  # requires the bash-completion package (apt install bash-completion / brew install bash-completion)
-  echo 'source <(sepay completion bash)' >> ~/.bashrc
+Write the script to a file once, as below; the shell loads it from there, so
+sepay does not run at every shell start. Homebrew installs the bash, zsh and fish
+scripts for you.
 
-Zsh:
-  # enable completion first if you haven't: echo 'autoload -U compinit; compinit' >> ~/.zshrc
-  echo 'source <(sepay completion zsh)' >> ~/.zshrc
+Bash (needs the bash-completion package):
+  mkdir -p ~/.local/share/bash-completion/completions
+  sepay completion bash > ~/.local/share/bash-completion/completions/sepay
+
+Zsh (then add fpath+=~/.zfunc to ~/.zshrc, before compinit):
+  mkdir -p ~/.zfunc
+  sepay completion zsh > ~/.zfunc/_sepay
 
 Fish:
   sepay completion fish > ~/.config/fish/completions/sepay.fish
 
-PowerShell:
+PowerShell (add the line to $PROFILE):
   sepay completion powershell | Out-String | Invoke-Expression
 
 Open a new shell for the changes to take effect.`,
+		Example: `  # bash, for the current user
+  sepay completion bash > ~/.local/share/bash-completion/completions/sepay
+
+  # print the zsh script to inspect it
+  sepay completion zsh | less`,
 		// The error must list the shells: ExactArgs names none and usage is silenced.
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {

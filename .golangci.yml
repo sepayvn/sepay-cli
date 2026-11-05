@@ -1,5 +1,5 @@
 # golangci-lint v2 config. Default linters (errcheck, govet, ineffassign,
-# staticcheck, unused) stay on; we add a couple and the formatters.
+# staticcheck, unused) stay on; the extra linters and formatters are listed below.
 version: "2"
 
 run:
@@ -7,9 +7,60 @@ run:
 
 linters:
   enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - gosec
     - misspell
+    - noctx
+    - nolintlint
     - revive
+    - testifylint
+    - unconvert
+    - unparam
   settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+      disabled-checks:
+        # Naming every result of (string, string, error)-style returns adds noise, not clarity.
+        - unnamedResult
+    gosec:
+      excludes:
+        # errcheck already reports unchecked errors.
+        - G104
+    revive:
+      # revive's default set, listed so an upgrade cannot change it silently.
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+    testifylint:
+      disable:
+        # The compared floats are integers decoded from JSON; exact equality is the intent.
+        - float-compare
     errcheck:
       # Writing to stdout/stderr rarely warrants error handling in a CLI.
       exclude-functions:
@@ -22,9 +73,27 @@ linters:
       # (the DI seam); a stub that doesn't use f yet is intentional, not dead.
       - linters:
           - revive
-        text: "unused-parameter"
+        text: "unused-parameter: parameter 'f' seems"
+      - linters:
+          - unparam
+        text: "- f is unused"
+      # Tests use fake secrets, loose modes to provoke errors, and fixture paths on purpose.
+      - path: _test\.go
+        linters:
+          - gosec
+      # Test-only helper: golden files are committed fixtures (0644/0755) at a path built from the test name.
+      - path: internal/golden/
+        linters:
+          - gosec
+      # Paths are fixed names under SEPAY_CONFIG_DIR / os.UserConfigDir, or the user's own --config
+      # file; never a value from the server.
+      - path: internal/config/
+        linters:
+          - gosec
+        text: "G304"
 
 formatters:
   enable:
-    - gofmt
+    # gofumpt is a stricter gofmt; keep its version in step with the Makefile and CI.
+    - gofumpt
     - goimports

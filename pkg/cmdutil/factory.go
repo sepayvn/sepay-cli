@@ -1,11 +1,10 @@
-// Package cmdutil provides the shared Factory and error types used by every command.
 package cmdutil
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,6 +21,8 @@ import (
 	"github.com/sepayvn/sepay-cli/internal/product"
 	"github.com/sepayvn/sepay-cli/pkg/iostreams"
 	"github.com/sepayvn/sepay-cli/pkg/jsonfmt"
+
+	"github.com/spf13/cobra"
 )
 
 // ClientID identifies the CLI as the registered public OAuth client.
@@ -52,7 +53,24 @@ type Factory struct {
 	// RawArgs is os.Args[1:]; HandleError reads the output format from it when flag parsing stopped early.
 	RawArgs []string
 
+	// Prompter answers interactive prompts; nil draws them on the terminal.
+	Prompter Prompter
+
+	// UsageCommand is the path of the command that failed (e.g. "sepay transaction get"), named in
+	// the usage hint; empty means the root.
+	UsageCommand string
+
 	envBannerDone bool
+
+	// commandHost resolves the host the running command reaches; nil for a command that reaches none.
+	// It lets the env banner come before the command's first prompt.
+	commandHost func(*config.Config) (env, baseURL, source string)
+	// commandHostKey is a product command's host override key (BANKHUB_API_URL…), empty for the
+	// rest. Its credential is minted at the API host with the CLI token, so the banner also names
+	// an overridden API host.
+	commandHostKey string
+	// commandCallsCheckout is set for a command that also posts to the PG hosted-checkout host.
+	commandCallsCheckout bool
 
 	// stdinSecretFlag names the flag that already drained stdin.
 	stdinSecretFlag string
@@ -88,9 +106,11 @@ type Factory struct {
 
 // New builds the real Factory wired to the OS environment.
 func New() *Factory {
-	io := iostreams.System()
-	f := &Factory{IOStreams: io, Global: &GlobalOptions{}, RawArgs: os.Args[1:]}
+	// Globals: flag parsing fills f.Global after New returns, so every closure reads it at call time.
+	ios := iostreams.System()
+	f := &Factory{IOStreams: ios, Global: &GlobalOptions{}, RawArgs: os.Args[1:]}
 
+	// Stores: config.yml and hosts.yml load once per run, beside --config when it is set.
 	var cachedCfg *config.Config
 	f.Config = func() (*config.Config, error) {
 		if cachedCfg != nil {
@@ -125,20 +145,21 @@ func New() *Factory {
 		if err != nil {
 			return nil, err
 		}
-		f.warnLoosePerms(io, hosts.Dir())
+		f.warnLoosePerms(ios, hosts.Dir())
 		cachedMgr = auth.NewManager(hosts)
 		return cachedMgr, nil
 	}
 
+	// Token resolution: refresh and renewal go through this client, so its host is checked first.
 	f.NewOAuthClient = func(host string) *auth.Client {
 		base := os.Getenv("SEPAY_OAUTH_URL")
 		if base != "" {
 			// An insecure or non-SePay override would leak the refresh token: fall back to the default.
 			if err := ValidateCredentialOrigin(base); err != nil {
-				fmt.Fprintf(io.ErrOut, "! ignoring insecure SEPAY_OAUTH_URL: %v\n", err)
+				fmt.Fprintf(ios.ErrOut, "! ignoring insecure SEPAY_OAUTH_URL: %v\n", err)
 				base = ""
 			} else if err := AssertOAuthHost(base, "SEPAY_OAUTH_URL"); err != nil {
-				fmt.Fprintf(io.ErrOut, "! %v\n", err)
+				fmt.Fprintf(ios.ErrOut, "! %v\n", err)
 				base = ""
 			}
 		}
@@ -146,16 +167,17 @@ func New() *Factory {
 			// A poisoned hosts.yml must not redirect the refresh token.
 			base = OAuthBaseURL(host)
 			if err := ValidateCredentialOrigin(base); err != nil {
-				fmt.Fprintf(io.ErrOut, "! ignoring insecure oauth host: %v\n", err)
+				fmt.Fprintf(ios.ErrOut, "! ignoring insecure oauth host: %v\n", err)
 				base = OAuthBaseURL("")
 			} else if err := AssertOAuthHost(base, "oauth host"); err != nil {
-				fmt.Fprintf(io.ErrOut, "! ignoring non-SePay oauth host %q; using %s\n", host, defaultOAuthHost)
+				fmt.Fprintf(ios.ErrOut, "! ignoring non-SePay oauth host %q; using %s\n", host, defaultOAuthHost)
 				base = OAuthBaseURL("")
 			}
 		}
 		return auth.NewClient(base, ClientID, nil)
 	}
 
+	// Client factories: each checks its base against the credential host before a token rides on it.
 	f.NewAPIClient = func() (*api.Client, error) {
 		cfg, err := f.Config()
 		if err != nil {
@@ -170,10 +192,10 @@ func New() *Factory {
 			// Never echo baseURL: the error is already redacted.
 			return nil, fmt.Errorf("invalid API base from %s: %w", source, err)
 		}
-		if err := AssertCredentialHost(env, baseURL, source, baseURLForEnv(env)); err != nil {
+		if err := AssertCredentialHost(baseURL, source, baseURLForEnv(env)); err != nil {
 			return nil, err
 		}
-		f.printEnvBanner(env, baseURL, source)
+		f.printEnvBanner(f.IOStreams.ErrOut, env, source, "")
 
 		token := f.resolveToken()
 		if token == "" {
@@ -182,9 +204,7 @@ func New() *Factory {
 		}
 		client := api.NewClient(baseURL, token)
 		client.Reauth = f.renewRejectedToken
-		client.Logf = func(format string, a ...any) {
-			fmt.Fprintf(io.ErrOut, format+"\n", a...)
-		}
+		client.Logf = f.progressf
 		return client, nil
 	}
 
@@ -221,7 +241,7 @@ func New() *Factory {
 			// Never echo baseURL: the error is already redacted.
 			return nil, fmt.Errorf("invalid API base from %s: %w", source, err)
 		}
-		if err := AssertCredentialHost(env, baseURL, source, pgBaseURLForEnv(env)); err != nil {
+		if err := AssertCredentialHost(baseURL, source, pgBaseURLForEnv(env)); err != nil {
 			return nil, err
 		}
 		// PG resolves its own base, so the noun-level sandbox guard does not cover it.
@@ -229,26 +249,24 @@ func New() *Factory {
 			return nil, err
 		}
 		// checkout/init uses the hosted-checkout host, gated separately.
-		_, checkoutURL, checkoutSource := f.pgCheckoutURL(cfg)
+		checkoutURL, checkoutSource := f.pgCheckoutURL(cfg)
 		if err := ValidateCredentialOrigin(checkoutURL); err != nil {
 			return nil, fmt.Errorf("invalid checkout base from %s: %w", checkoutSource, err)
 		}
-		if err := AssertCredentialHost(env, checkoutURL, checkoutSource, payBaseURLForEnv(env)); err != nil {
+		if err := AssertCredentialHost(checkoutURL, checkoutSource, payBaseURLForEnv(env)); err != nil {
 			return nil, err
 		}
 		if err := f.AssertSandboxBase(env, checkoutURL, checkoutSource, payBaseURLForEnv(config.EnvSandbox)); err != nil {
 			return nil, err
 		}
-		f.printEnvBanner(env, baseURL, source)
+		f.printEnvBanner(f.IOStreams.ErrOut, env, "", f.apiSource(cfg), f.ownHosts(cfg, source, "PG_API_URL")...)
 		mgr, err := f.ProductManager()
 		if err != nil {
 			return nil, err
 		}
 		client := pg.NewClient(baseURL, mgr)
 		client.CheckoutURL = checkoutURL
-		client.Logf = func(format string, a ...any) {
-			fmt.Fprintf(io.ErrOut, format+"\n", a...)
-		}
+		client.Logf = f.progressf
 		return client, nil
 	}
 
@@ -262,22 +280,20 @@ func New() *Factory {
 			// Never echo baseURL: the error is already redacted.
 			return nil, fmt.Errorf("invalid API base from %s: %w", source, err)
 		}
-		if err := AssertCredentialHost(env, baseURL, source, bankHubBaseURLForEnv(env)); err != nil {
+		if err := AssertCredentialHost(baseURL, source, bankHubBaseURLForEnv(env)); err != nil {
 			return nil, err
 		}
 		// Bank Hub resolves its own base, so the noun-level sandbox guard does not cover it.
 		if err := f.AssertSandboxBase(env, baseURL, source, bankHubBaseURLForEnv(config.EnvSandbox)); err != nil {
 			return nil, err
 		}
-		f.printEnvBanner(env, baseURL, source)
+		f.printEnvBanner(f.IOStreams.ErrOut, env, "", f.apiSource(cfg), f.ownHosts(cfg, source, "BANKHUB_API_URL")...)
 		mgr, err := f.ProductManager()
 		if err != nil {
 			return nil, err
 		}
 		client := bankhub.NewClient(baseURL, mgr)
-		client.Logf = func(format string, a ...any) {
-			fmt.Fprintf(io.ErrOut, format+"\n", a...)
-		}
+		client.Logf = f.progressf
 		return client, nil
 	}
 
@@ -291,22 +307,20 @@ func New() *Factory {
 			// Never echo baseURL: the error is already redacted.
 			return nil, fmt.Errorf("invalid API base from %s: %w", source, err)
 		}
-		if err := AssertCredentialHost(env, baseURL, source, einvoiceBaseURLForEnv(env)); err != nil {
+		if err := AssertCredentialHost(baseURL, source, einvoiceBaseURLForEnv(env)); err != nil {
 			return nil, err
 		}
 		// E-Invoice resolves its own base, so the noun-level sandbox guard does not cover it.
 		if err := f.AssertSandboxBase(env, baseURL, source, einvoiceBaseURLForEnv(config.EnvSandbox)); err != nil {
 			return nil, err
 		}
-		f.printEnvBanner(env, baseURL, source)
+		f.printEnvBanner(f.IOStreams.ErrOut, env, "", f.apiSource(cfg), f.ownHosts(cfg, source, "EINVOICE_API_URL")...)
 		mgr, err := f.ProductManager()
 		if err != nil {
 			return nil, err
 		}
 		client := einvoice.NewClient(baseURL, mgr)
-		client.Logf = func(format string, a ...any) {
-			fmt.Fprintf(io.ErrOut, format+"\n", a...)
-		}
+		client.Logf = f.progressf
 		return client, nil
 	}
 
@@ -315,10 +329,10 @@ func New() *Factory {
 
 // warnLoosePerms warns (never refuses) when a credential file is readable beyond its owner.
 // Not silenced by --quiet or -o json: the CI runs that write hosts.yml from a secret set those.
-func (f *Factory) warnLoosePerms(io *iostreams.IOStreams, dir string) {
+func (f *Factory) warnLoosePerms(ios *iostreams.IOStreams, dir string) {
 	for _, name := range []string{config.HostsFile, product.ProductsFile} {
 		if loose, err := config.LoosePerms(dir, name); err == nil && loose {
-			fmt.Fprintf(io.ErrOut, "! %s is readable by other users; run: chmod 600 %s\n",
+			fmt.Fprintf(ios.ErrOut, "! %s is readable by other users; run: chmod 600 %s\n",
 				name, filepath.Join(dir, name))
 		}
 	}
@@ -400,7 +414,16 @@ func (f *Factory) ConfirmProdWrite(action string) error {
 	}
 	// action may carry server or user text; an escape could rewrite the prompt.
 	action = jsonfmt.Clean(action)
-	fmt.Fprintf(f.IOStreams.ErrOut, "! live: %s targets PRODUCTION\n", action)
+	warn := f.IOStreams.ErrOut
+	if !f.Global.Yes && f.canPrompt() {
+		// The env line comes first, so the warning stays next to its question.
+		f.bannerBeforePrompt()
+		warn = f.promptOut()
+	}
+	// Under --json or -o yaml stderr carries only the error object, and --yes already confirmed.
+	if f.Global.Output != "json" && f.Global.Output != "yaml" {
+		fmt.Fprintf(warn, "! live: %s targets PRODUCTION\n", action)
+	}
 	ok, err := f.Confirm(fmt.Sprintf("%s on production?", action))
 	if err != nil {
 		return err
@@ -528,176 +551,10 @@ var ErrTokenRefreshUnreachable = errors.New("could not reach the OAuth host to r
 // errRefreshExchange marks a failed exchange, as opposed to a failure storing the new token.
 var errRefreshExchange = errors.New("token exchange failed")
 
-// StaleTokenRefresh reports whether the last client's token went out stale because refresh was unreachable.
-func (f *Factory) StaleTokenRefresh() error { return f.staleTokenRefresh }
-
-// refusedTheGrant: only a transport failure (*url.Error) means the host was never reached; an unreadable
-// answer counts as refused so a revoked grant behind a proxy still ends the session. 408, 429 and 5xx settle nothing.
-func refusedTheGrant(err error) bool {
-	var transport *url.Error
-	if errors.As(err, &transport) {
-		return false
-	}
-
-	var e *auth.Error
-	if !errors.As(err, &e) {
-		return true
-	}
-
-	if e.StatusCode >= 500 || e.StatusCode == http.StatusRequestTimeout || e.StatusCode == http.StatusTooManyRequests {
-		return false
-	}
-
-	return e.StatusCode >= 400
-}
-
-// grantIsGone is narrower than refusedTheGrant because it deletes the stored token.
-func grantIsGone(err error) bool {
-	var e *auth.Error
-	if !errors.As(err, &e) {
-		return false
-	}
-	return e.Code == "invalid_grant" || (e.StatusCode == http.StatusUnauthorized && e.Code == "invalid_request")
-}
-
-// resolveToken returns the chosen profile's access token, refreshing an expired one first.
-func (f *Factory) resolveToken() string {
-	f.staleTokenRefresh = nil
-
-	mgr, err := f.Credentials()
-	if err != nil {
-		return ""
-	}
-	name := f.ProfileName(mgr.Hosts())
-	cred, err := mgr.Get(name)
-	if err != nil {
-		return ""
-	}
-	fresh, refreshErr := f.refreshIfExpired(mgr, name, cred)
-	f.noteStaleRefresh(refreshErr)
-	if fresh != "" {
-		return fresh
-	}
-	if grantIsGone(refreshErr) {
-		return ""
-	}
-	return cred.AccessToken
-}
-
-// renewRejectedToken is the API client's Reauth hook.
-func (f *Factory) renewRejectedToken(ctx context.Context, rejected string) string {
-	mgr, err := f.Credentials()
-	if err != nil {
-		return ""
-	}
-	name := f.ProfileName(mgr.Hosts())
-	cred, err := mgr.Get(name)
-	if err != nil || cred.RefreshToken == "" {
-		return ""
-	}
-	if cred.AccessToken != rejected && !cred.Expired() {
-		return cred.AccessToken
-	}
-	ctx, cancel := context.WithTimeout(ctx, refreshTimeout)
-	defer cancel()
-	fresh, err := f.refresh(ctx, mgr, name, cred)
-	f.noteStaleRefresh(err)
-	return fresh
-}
-
-func (f *Factory) noteStaleRefresh(err error) {
-	if errors.Is(err, errRefreshExchange) && !refusedTheGrant(err) {
-		f.staleTokenRefresh = fmt.Errorf("%w: %v", ErrTokenRefreshUnreachable, err)
-	}
-}
-
-// TokenForProfile returns the OAuth host and a valid access token for a profile, refreshing if lapsed.
-func (f *Factory) TokenForProfile(explicit string) (host, accessToken string, err error) {
-	mgr, err := f.Credentials()
-	if err != nil {
-		return "", "", err
-	}
-	hosts := mgr.Hosts()
-	name := explicit
-	if name == "" {
-		name = f.ProfileName(hosts)
-	}
-	cred, err := mgr.Get(name)
-	if err != nil || cred.AccessToken == "" {
-		return "", "", AuthError{Err: errors.New("not logged in, run: sepay login")}
-	}
-	token := cred.AccessToken
-	if fresh, _ := f.refreshIfExpired(mgr, name, cred); fresh != "" {
-		token = fresh
-	}
-	return hosts.Profiles[name].Host, token, nil
-}
-
 const refreshTimeout = 30 * time.Second
 
 // SetContext gives the factory the running command's context, for work started outside a command's own calls.
 func (f *Factory) SetContext(ctx context.Context) { f.runCtx = ctx }
-
-// refreshIfExpired returns "" on any failure, so the caller sends the stored token and gets a 401.
-func (f *Factory) refreshIfExpired(mgr *auth.Manager, profile string, cred *auth.Credential) (string, error) {
-	if !cred.Expired() || cred.RefreshToken == "" {
-		return "", nil
-	}
-	base := f.runCtx
-	if base == nil {
-		base = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(base, refreshTimeout)
-	defer cancel()
-	return f.refresh(ctx, mgr, profile, cred)
-}
-
-func (f *Factory) refresh(ctx context.Context, mgr *auth.Manager, profile string, cred *auth.Credential) (string, error) {
-	// Under the refresh lock a racing process sees the pair this one stored and spends nothing.
-	// SetIfCurrent still settles a concurrent re-login, which does not take the lock.
-	if release, ok := mgr.LockRefresh(ctx); ok {
-		defer release()
-		if current, err := mgr.Current(profile); err == nil && current.RefreshToken != cred.RefreshToken {
-			if current.Revoked() {
-				return "", nil
-			}
-			if !current.Expired() {
-				return current.AccessToken, nil
-			}
-			cred = current
-		}
-	}
-	p := mgr.Hosts().Profiles[profile]
-
-	tok, err := f.NewOAuthClient(p.Host).Refresh(ctx, cred.RefreshToken, p.Scopes)
-	if err != nil {
-		if grantIsGone(err) {
-			_ = mgr.MarkRevoked(profile, cred)
-		}
-		return "", fmt.Errorf("%w: %w", errRefreshExchange, err)
-	}
-	// A non-rotating endpoint may omit refresh_token: keep the stored one.
-	if tok.RefreshToken == "" {
-		tok.RefreshToken = cred.RefreshToken
-	}
-	if _, err := mgr.SetIfCurrent(profile, p.Host, cred, auth.CredentialFromToken(tok), strings.Fields(tok.Scope), p.Insecure); err != nil {
-		var changed *auth.ProfileChangedError
-		if errors.As(err, &changed) && changed.Held != nil && !changed.Held.Expired() {
-			return changed.Held.AccessToken, nil
-		}
-		if errors.Is(err, auth.ErrKeychainUnavailable) {
-			// Nothing reached the file. Use the new token for this run only, and say why the next
-			// run may have to sign in again (the server may have rotated the refresh token).
-			if !f.keychainWarned {
-				f.keychainWarned = true
-				f.ErrPrintf("! the renewed token is used for this run only and was not saved: %s\n", err.Error())
-			}
-			return tok.AccessToken, nil
-		}
-		return "", err
-	}
-	return tok.AccessToken, nil
-}
 
 // ProductStore returns the product-credential cache, evicted on login/logout so a reused label can't leak a prior tenant's.
 func (f *Factory) ProductStore() (*product.Store, error) {
@@ -738,15 +595,15 @@ func (f *Factory) pgBaseURL(cfg *config.Config) (env, baseURL, source string) {
 }
 
 // pgCheckoutURL never falls back to the pg_api_url override, which may not serve checkout/init.
-func (f *Factory) pgCheckoutURL(cfg *config.Config) (env, baseURL, source string) {
-	env = f.resolveEnv(cfg)
+func (f *Factory) pgCheckoutURL(cfg *config.Config) (baseURL, source string) {
+	env := f.resolveEnv(cfg)
 	if v := envHostOverride(env, "PG_CHECKOUT_URL"); v != "" {
-		return env, v, "SEPAY_" + strings.ToUpper(env) + "_PG_CHECKOUT_URL"
+		return v, "SEPAY_" + strings.ToUpper(env) + "_PG_CHECKOUT_URL"
 	}
 	if v := cfg.Get(env + ".pg_checkout_url"); v != "" {
-		return env, v, "config"
+		return v, "config"
 	}
-	return env, payBaseURLForEnv(env), "default"
+	return payBaseURLForEnv(env), "default"
 }
 
 func bankHubBaseURLForEnv(env string) string {
@@ -789,18 +646,122 @@ func envHostOverride(env, suffix string) string {
 	return os.Getenv("SEPAY_" + strings.ToUpper(env) + "_" + suffix)
 }
 
-// printEnvBanner prints env and host once per run. Product builders must call it before minting,
-// or the broker's v2 host wins the banner.
-func (f *Factory) printEnvBanner(env, host, source string) {
+// progressf reports a client's progress (a 429 wait, a network retry) on stderr. Under
+// --quiet, --json or -o yaml it stays silent unless --verbose asks for it: machine output keeps
+// stderr for the error object alone.
+func (f *Factory) progressf(format string, a ...any) {
+	if !f.Global.Verbose && (f.Global.Quiet || f.Global.Output != "table") {
+		return
+	}
+	fmt.Fprintf(f.IOStreams.ErrOut, format+"\n", a...)
+}
+
+// ownHost is a host a product command calls besides the API host: its banner label, where it came
+// from and its override key.
+type ownHost struct{ label, source, key string }
+
+// ownHosts lists the product hosts the running command calls: its own and, for checkout init, the
+// hosted-checkout host.
+func (f *Factory) ownHosts(cfg *config.Config, source, key string) []ownHost {
+	hosts := []ownHost{{"host", source, key}}
+	if f.commandCallsCheckout {
+		_, checkoutSource := f.pgCheckoutURL(cfg)
+		hosts = append(hosts, ownHost{"checkout host", checkoutSource, "PG_CHECKOUT_URL"})
+	}
+	return hosts
+}
+
+// printEnvBanner prints the env once per run, plus where each host came from when it is not the
+// built-in default; the URL itself is left to --verbose. source is the API host's for an API
+// command, empty for a product command, which passes its own hosts instead and apiSource, where the
+// API host its credential is minted at came from, since the CLI token goes there too. Product
+// builders must call it before minting, or the broker's banner, which names only the API host,
+// comes first.
+func (f *Factory) printEnvBanner(w io.Writer, env, source, apiSource string, own ...ownHost) {
 	if f.envBannerDone || f.Global.Quiet || f.Global.Output != "table" {
 		return
 	}
 	f.envBannerDone = true
-	line := fmt.Sprintf("env: %s → %s", env, host)
-	if source != "default" {
-		line += " (" + source + ")"
+	line := "env: " + env
+	if source != "" && source != "default" {
+		line += " · host from " + source
 	}
-	fmt.Fprintln(f.IOStreams.ErrOut, f.IOStreams.Dim(line))
+	var unmovedLabels, unmovedKeys []string
+	for _, h := range own {
+		if h.source != "default" {
+			line += " · " + h.label + " from " + h.source
+			continue
+		}
+		unmovedLabels = append(unmovedLabels, h.label)
+		unmovedKeys = append(unmovedKeys, "SEPAY_"+strings.ToUpper(env)+"_"+h.key)
+	}
+	if apiSource != "" && apiSource != "default" {
+		line += " · API host from " + apiSource
+	}
+	fmt.Fprintln(w, f.IOStreams.Dim(line))
+	// --api-base reads as "send this command there", but it leaves the product hosts where they are.
+	if apiSource == "--api-base" && len(unmovedKeys) > 0 {
+		pronoun := "it"
+		if len(unmovedKeys) > 1 {
+			pronoun = "them"
+		}
+		fmt.Fprintln(w, f.IOStreams.Dim(fmt.Sprintf(
+			"note: --api-base moves only the API host; this command still calls its default %s (set %s to move %s)",
+			strings.Join(unmovedLabels, " and "), strings.Join(unmovedKeys, " and "), pronoun)))
+	}
+}
+
+// apiSource is where the API host came from.
+func (f *Factory) apiSource(cfg *config.Config) string {
+	_, _, source := f.apiBaseURL(cfg)
+	return source
+}
+
+// BindCommand records which hosts cmd reaches, chosen by its top-level noun: Bank Hub, PG and
+// E-Invoice resolve their own, local commands none. A command annotated AnnHost overrides its noun.
+func (f *Factory) BindCommand(cmd *cobra.Command) {
+	noun := cmd
+	for noun.HasParent() && noun.Parent().HasParent() {
+		noun = noun.Parent()
+	}
+	f.commandHostKey = ""
+	f.commandCallsCheckout = false
+	host := Annotation(cmd, AnnHost)
+	if host == HostAPI {
+		f.commandHost = f.apiBaseURL
+		return
+	}
+	switch noun.Name() {
+	case "bankhub":
+		f.commandHost, f.commandHostKey = f.bankHubBaseURL, "BANKHUB_API_URL"
+	case "pg":
+		f.commandHost, f.commandHostKey = f.pgBaseURL, "PG_API_URL"
+		f.commandCallsCheckout = host == HostPGCheckout
+	case "einvoice":
+		f.commandHost, f.commandHostKey = f.einvoiceBaseURL, "EINVOICE_API_URL"
+	case "auth", "login", "logout", "config", "completion", "version", "sepay":
+		f.commandHost = nil
+	default:
+		f.commandHost = f.apiBaseURL
+	}
+}
+
+// bannerBeforePrompt prints the env banner ahead of the first question, so the answers are read
+// against the environment they go to.
+func (f *Factory) bannerBeforePrompt() {
+	if f.envBannerDone || f.commandHost == nil || f.Config == nil {
+		return
+	}
+	cfg, err := f.Config()
+	if err != nil {
+		return
+	}
+	env, _, source := f.commandHost(cfg)
+	if f.commandHostKey == "" {
+		f.printEnvBanner(f.promptOut(), env, source, "")
+		return
+	}
+	f.printEnvBanner(f.promptOut(), env, "", f.apiSource(cfg), f.ownHosts(cfg, source, f.commandHostKey)...)
 }
 
 func baseURLForEnv(env string) string {

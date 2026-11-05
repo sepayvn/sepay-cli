@@ -38,17 +38,17 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for name := range req.Header {
 		names = append(names, name)
 	}
-	url := debugURL(req.URL)
-	slog.Debug("request", "method", req.Method, "url", url, "headers", names)
+	dbgURL := debugURL(req.URL)
+	slog.Debug("request", "method", req.Method, "url", dbgURL, "headers", names)
 
 	start := time.Now()
 	resp, err := t.base.RoundTrip(req)
 	elapsed := time.Since(start).Round(time.Millisecond)
 	if err != nil {
-		slog.Debug("request failed", "method", req.Method, "url", url, "duration", elapsed, "error", err)
+		slog.Debug("request failed", "method", req.Method, "url", dbgURL, "duration", elapsed, "error", err)
 		return resp, err
 	}
-	slog.Debug("response", "method", req.Method, "url", url, "status", resp.StatusCode, "duration", elapsed)
+	slog.Debug("response", "method", req.Method, "url", dbgURL, "status", resp.StatusCode, "duration", elapsed)
 	return resp, nil
 }
 

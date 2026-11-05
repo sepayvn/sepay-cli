@@ -9,7 +9,7 @@
 *.prof
 
 # Local scratch, never committed
-/docs/
+/scratch/
 /sandbox-test/
 
 # Editor, OS and local assistant files

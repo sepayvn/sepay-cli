@@ -82,6 +82,32 @@ func TestGet_MasksSecretsInJSON(t *testing.T) {
 	assert.Contains(t, s, `"oauth2_client_secret": "***"`)
 }
 
+// An API that echoes credentials after a write must not reach the terminal either.
+func TestCreateAndUpdate_MaskSecretsTheAPIEchoes(t *testing.T) {
+	echoed := `{"status":"success","data":{"id":"wh_2","name":"Local","event_type":"All","authen_type":"Api_Key","webhook_url":"https://x.test/h","is_verify_payment":false,"skip_if_no_code":false,"only_va":false,"bank_mode":"all","bank_account_xid":null,"bank_sub_account_xids":[],"prefix_filters":[],"alert_threshold":null,"active":true,"created_at":"","api_key":"secret123","secret_key":"hmac456","oauth2_client_secret":"cs789"}}`
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"create", []string{"create", "--listen-only", "--bank-mode", "all", "--name", "Local"}},
+		{"update", []string{"update", "wh_2", "--url", "https://x.test/h"}},
+	} {
+		for _, output := range []string{"", "json", "yaml"} {
+			t.Run(tc.name+"/"+output, func(t *testing.T) {
+				f, out, errOut := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(echoed))
+				})
+				f.Global.Output = output
+				require.NoError(t, run(NewCmdWebhook(f), tc.args...))
+				all := out.String() + errOut.String()
+				for _, secret := range []string{"secret123", "hmac456", "cs789"} {
+					assert.NotContains(t, all, secret)
+				}
+			})
+		}
+	}
+}
+
 const logRow = `{"transaction_id":"aaaaaaaa-0000-4000-8000-000000000001","webhook_xid":"cccccccc-0000-4000-8000-000000000001","replayable":true,"status":"failed","type":"transaction","is_replay":false,"request_method":"POST","request_url":"https://x.test/hook","connect_success":true,"response_status_code":500,"response_time_ms":123,"error_message":null,"error_code":null,"created_at":"2026-07-15 10:00:00"}`
 
 func logsPage(rows ...string) string {
@@ -158,6 +184,26 @@ func TestLogs_RejectsMalformedTimesBeforeAnyRequest(t *testing.T) {
 			f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) { t.Error("no request should be made") })
 			err := run(NewCmdWebhook(f), append([]string{"logs"}, args...)...)
 			require.Error(t, err)
+			assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+		})
+	}
+}
+
+func TestLogs_TimeErrorsNameTheSpellingTyped(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--from", "bad"}, "--from must be a duration or a date"},
+		{[]string{"--to", "bad"}, "--to must be a date or datetime"},
+		{[]string{"--from", "2026-11-05", "--to", "2026-11-01"}, "--from must not be after --to"},
+		{[]string{"--since", "2026-11-05", "--until", "2026-11-01"}, "--since must not be after --until"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) { t.Error("no request should be made") })
+			err := run(NewCmdWebhook(f), append([]string{"logs"}, tc.args...)...)
+			require.ErrorContains(t, err, tc.want)
 			assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 		})
 	}
@@ -320,7 +366,7 @@ func TestReplay_PickerSkipsUnreplayableRows(t *testing.T) {
 
 func TestReplay_NotDispatchedRelaysTheReasonOnce(t *testing.T) {
 	var posts int
-	f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, _, _ := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
 		posts++
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_, _ = w.Write([]byte(`{"status":"error","error_code":"replay_not_dispatched","message":"Webhook đang tắt"}`))
@@ -342,6 +388,42 @@ func TestReplay_HandlerFailureIsReportedNotAnError(t *testing.T) {
 	f.Global.Yes = true
 	require.NoError(t, run(NewCmdWebhook(f), "replay", "--transaction", "tx-1", "--webhook", "wh-1"))
 	assert.Contains(t, errOut.String(), "Replayed, but the handler answered 500")
+}
+
+func TestReplay_ListenWebhookHasNoHandlerTiming(t *testing.T) {
+	f, _, errOut := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.NewReplacer(`"status":"success","type"`, `"status":"listen","type"`, `"request_url":"https://x.test/hook"`, `"request_url":null`,
+			`"response_status_code":200`, `"response_status_code":null`, `"response_time_ms":88`, `"response_time_ms":null`).Replace(replayOK)))
+	})
+	f.Global.Yes = true
+	require.NoError(t, run(NewCmdWebhook(f), "replay", "--transaction", "tx-1", "--webhook", "wh-1"))
+	assert.Contains(t, errOut.String(), "Replayed (delivered). Check the result with: sepay webhook logs --transaction tx-1 --webhook wh-1")
+	assert.NotContains(t, errOut.String(), "in -ms")
+}
+
+// An HTTP webhook whose handler never answered has no status code either; the server's reason
+// is the result, and nothing claims the handler answered.
+func TestReplay_UnreachableHandlerKeepsTheServerReason(t *testing.T) {
+	f, _, errOut := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.NewReplacer(`"delivered":true`, `"delivered":false`, `"status":"success","type"`, `"status":"failed","type"`,
+			`"connect_success":true`, `"connect_success":false`, `"response_status_code":200`, `"response_status_code":null`,
+			`"response_time_ms":88`, `"response_time_ms":null`, `"error_message":null`, `"error_message":"connect timeout"`).Replace(replayOK)))
+	})
+	f.Global.Yes = true
+	require.NoError(t, run(NewCmdWebhook(f), "replay", "--transaction", "tx-1", "--webhook", "wh-1"))
+	assert.Contains(t, errOut.String(), "! Replayed, but the handler could not be reached (connect timeout).")
+	assert.NotContains(t, errOut.String(), "did not answer")
+}
+
+// With no log to read, the outcome is all the CLI knows; it names no cause.
+func TestReplay_NotDeliveredWithoutALogNamesNoCause(t *testing.T) {
+	f, _, errOut := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"delivered":false,"message":"x","log":null}}`))
+	})
+	f.Global.Yes = true
+	require.NoError(t, run(NewCmdWebhook(f), "replay", "--transaction", "tx-1", "--webhook", "wh-1"))
+	assert.Contains(t, errOut.String(), "Replayed (not delivered). Check the result with: sepay webhook logs --transaction tx-1 --webhook wh-1")
+	assert.NotContains(t, errOut.String(), "2xx")
 }
 
 func TestUpdate_NoFlagsNonInteractiveIsUsageError(t *testing.T) {
@@ -475,6 +557,7 @@ func TestEditableFields_BlankClearsOnlyWhereMeant(t *testing.T) {
 func TestEditableFields_PromptLabelsAreDistinct(t *testing.T) {
 	seen := map[string]string{}
 	for _, fd := range editableFields() {
+		assert.NotRegexp(t, `(?i)payment[- ]code`, fd.label, "the concept is called pay code")
 		if fd.ask == nil {
 			continue
 		}
@@ -626,7 +709,7 @@ func TestCreate_MultiTargeting(t *testing.T) {
 }
 
 func TestCreate_MultiNoAccountsIsUsageError(t *testing.T) {
-	f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, r *http.Request) {
 		t.Errorf("no request should be sent: %s %s", r.Method, r.URL.Path)
 	})
 	err := run(NewCmdWebhook(f), "create", "--url", "https://x.test", "--bank-mode", "multi")
@@ -728,25 +811,14 @@ func TestUpdate_NoFieldsIsUsageError(t *testing.T) {
 }
 
 func TestCreate_BankConfigPerAccount(t *testing.T) {
-	var body map[string]any
-	f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &body)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"status":"success","data":{"id":"wh_9","bank_mode":"multi","bank_sub_account_xids":[],"prefix_filters":[],"active":true,"created_at":"x"}}`))
-	})
+	f, srv := newReachServer(t, "")
 	require.NoError(t, run(NewCmdWebhook(f), "create", "--url", "https://x.test",
-		"--bank-account", "ba_A", "--bank-account", "ba_B",
-		"--bank-config", "ba_A=on:all", "--bank-config", "ba_B=off:list"))
+		"--bank-account", "ba_both", "--bank-account", "ba_hasva",
+		"--bank-config", "ba_both=on:all", "--bank-config", "ba_hasva=off:list", "--sub-account", "va_h1"))
 
-	cfg, ok := body["bank_config"].(map[string]any)
-	require.True(t, ok)
-	a := cfg["ba_A"].(map[string]any)
-	assert.Equal(t, true, a["receive_primary"])
-	assert.Equal(t, "all", a["va_mode"])
-	b := cfg["ba_B"].(map[string]any)
-	assert.Equal(t, false, b["receive_primary"])
-	assert.Equal(t, "list", b["va_mode"])
+	cfg, subs := srv.config(t)
+	assert.Equal(t, map[string]any{"ba_both": entry(true, "all"), "ba_hasva": entry(false, "list")}, cfg)
+	assert.Equal(t, []any{"va_h1"}, subs)
 }
 
 // Last-wins would store "on:all" as "off:none" silently.
@@ -757,10 +829,10 @@ func TestCreate_BankConfigRejectsARepeatedAccount(t *testing.T) {
 
 	err := run(NewCmdWebhook(f), "create", "--url", "https://x.test",
 		"--bank-mode", "single", "--bank-account", "ba_A",
-		"--bank-config", "ba_A=on:all", "--bank-config", "ba_A=off:none")
+		"--bank-config", "ba_A=on:all", "--bank-config", "ba_A=off:all")
 
 	require.Error(t, err)
-	assert.EqualError(t, err, "--bank-config lists ba_A twice; give each bank account one config")
+	require.EqualError(t, err, "--bank-config lists ba_A twice; give each bank account one config")
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 }
 
@@ -783,14 +855,18 @@ func TestWrite_OnlyVAIsRefusedOnlyWhereItIsANoOp(t *testing.T) {
 	}{
 		{
 			name: "multi with no sub-account changes nothing",
-			args: []string{"create", "--url", "https://x.test", "--bank-mode", "multi",
-				"--bank-account", "ba_1", "--bank-account", "ba_2", "--only-va"},
+			args: []string{
+				"create", "--url", "https://x.test", "--bank-mode", "multi",
+				"--bank-account", "ba_1", "--bank-account", "ba_2", "--only-va",
+			},
 			refused: true,
 		},
 		{
 			name: "multi with a sub-account narrows delivery",
-			args: []string{"create", "--url", "https://x.test", "--bank-mode", "multi",
-				"--bank-account", "ba_1", "--only-va", "--sub-account", "va_1"},
+			args: []string{
+				"create", "--url", "https://x.test", "--bank-mode", "multi",
+				"--bank-account", "ba_1", "--only-va", "--sub-account", "va_1",
+			},
 		},
 		{
 			name: "single with no sub-account still turns the account number off",
@@ -867,16 +943,12 @@ func TestWebhook_SandboxOnlyVerbsSaySoInShort(t *testing.T) {
 }
 
 func TestUpdate_BankConfigOnly(t *testing.T) {
-	var body map[string]any
-	f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &body)
-		_, _ = w.Write([]byte(`{"status":"success","data":{"id":"wh_1","bank_mode":"single","bank_sub_account_xids":[],"prefix_filters":[],"active":true,"created_at":"x"}}`))
-	})
-	require.NoError(t, run(NewCmdWebhook(f), "update", "wh_1", "--bank-config", "ba_A=off:none"))
-	cfg, ok := body["bank_config"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "none", cfg["ba_A"].(map[string]any)["va_mode"])
+	f, srv := newReachServer(t, storedSinglePlain)
+	require.NoError(t, run(NewCmdWebhook(f), "update", "wh_1", "--bank-config", "ba_plain=on:none"))
+	cfg, _ := srv.config(t)
+	assert.Equal(t, map[string]any{"ba_plain": entry(true, "none")}, cfg)
+	assert.NotContains(t, srv.body, "bank_mode", "a single webhook keeps its mode")
+	assert.Equal(t, "ba_plain", srv.body["bank_account_xid"])
 }
 
 func TestCreate_SecretFromStdinReachesTheBody(t *testing.T) {
@@ -1030,4 +1102,84 @@ func TestGet_JSONReadsAlertAndRetryValues(t *testing.T) {
 	assert.Contains(t, s, `"alert_threshold": 3`)
 	assert.Contains(t, s, `"managed_by_partner": true`)
 	assert.Contains(t, s, `"active": true`)
+}
+
+func TestLogs_FromAndToSendSinceAndUntil(t *testing.T) {
+	for _, tc := range []struct{ name, flag, param string }{
+		{"since", "--since", "since"},
+		{"from", "--from", "since"},
+		{"until", "--until", "until"},
+		{"to", "--to", "until"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got url.Values
+			f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Query()
+				_, _ = w.Write([]byte(logsPage()))
+			})
+			require.NoError(t, run(NewCmdWebhook(f), "logs", tc.flag, "2026-10-30"))
+			assert.NotEmpty(t, got.Get(tc.param))
+		})
+	}
+	f, _, _ := testFactory(t, func(http.ResponseWriter, *http.Request) { t.Error("no request expected") })
+	err := run(NewCmdWebhook(f), "logs", "--since", "24h", "--from", "24h")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.ErrorContains(t, err, "--since and --from are the same flag; pass one")
+}
+
+func TestWrite_VAXIDAndSubAccountSendTheSameBody(t *testing.T) {
+	for _, name := range []string{"--va-xid", "--sub-account"} {
+		t.Run(name, func(t *testing.T) {
+			var body map[string]any
+			f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(b, &body)
+				_, _ = w.Write([]byte(`{"status":"success","data":{"id":"wh_1","bank_mode":"single","bank_sub_account_xids":["va_1"],"prefix_filters":[],"only_va":true,"active":true,"created_at":"x"}}`))
+			})
+			require.NoError(t, run(NewCmdWebhook(f), "update", "wh_1", "--only-va", name, "va_1"))
+			assert.Equal(t, []any{"va_1"}, body["bank_sub_account_xids"])
+		})
+	}
+	f, _, _ := testFactory(t, func(http.ResponseWriter, *http.Request) { t.Error("no request expected") })
+	err := run(NewCmdWebhook(f), "update", "wh_1", "--va-xid", "va_1", "--sub-account", "va_2")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.ErrorContains(t, err, "--va-xid and --sub-account are the same flag; pass one")
+}
+
+func TestLogs_RefusesSinceAfterUntil(t *testing.T) {
+	cases := []struct {
+		args    []string
+		wantErr bool
+	}{
+		{[]string{"--since", "2026-11-06", "--until", "2026-11-05"}, true},
+		{[]string{"--since", "2026-11-05 10:00", "--until", "2026-11-05"}, false},
+		{[]string{"--since", "24h", "--until", "2020-01-01"}, true},
+	}
+	for _, c := range cases {
+		called := false
+		f, _, _ := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			_, _ = w.Write([]byte(`{"status":"success","data":[]}`))
+		})
+		err := run(NewCmdWebhook(f), append([]string{"logs"}, c.args...)...)
+		if c.wantErr {
+			require.EqualError(t, err, "--since must not be after --until")
+			assert.False(t, called)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+}
+
+func TestCreate_OAuth2FlagNeedsItsFields(t *testing.T) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("must not create without the oauth2 fields: %s %s", r.Method, r.URL.Path)
+	})
+	err := run(NewCmdWebhook(f), "create", "--url", "https://x.test", "--bank-mode", "all", "--auth-type", "oauth2", "--oauth2-token-url", "https://auth.test/token")
+	require.EqualError(t, err, "--oauth2-client-id is required")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+
+	f, _, _ = testFactory(t, func(_ http.ResponseWriter, _ *http.Request) { t.Error("must not create") })
+	err = run(NewCmdWebhook(f), "create", "--url", "https://x.test", "--bank-mode", "all", "--auth-type", "oauth2", "--oauth2-client-id", "cid")
+	require.EqualError(t, err, "--oauth2-token-url is required")
 }

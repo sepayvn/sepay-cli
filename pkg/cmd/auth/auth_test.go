@@ -135,7 +135,7 @@ func newFakeOAuth(t *testing.T) *fakeOAuth {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	mux.HandleFunc("/oauth/tokens", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/oauth/tokens", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		status, sessions := f.tokensStatus, f.sessions
 		f.mu.Unlock()
@@ -163,7 +163,7 @@ func newFakeOAuth(t *testing.T) *fakeOAuth {
 		writeJSON(w, map[string]any{"status": "success", "data": map[string]any{"revoked": 1}})
 	})
 
-	mux.HandleFunc("/oauth/tokens/revoke-all", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/oauth/tokens/revoke-all", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		f.revokeAllCount++
 		n := len(f.sessions)
@@ -251,11 +251,11 @@ func run(cmd *cobra.Command, args ...string) error {
 	return cmd.ExecuteContext(context.Background())
 }
 
-func seedProfile(t *testing.T, f *cmdutil.Factory, name, host string, scopes []string) {
+func seedProfile(t *testing.T, f *cmdutil.Factory, name string, scopes []string) {
 	t.Helper()
 	mgr, err := f.Credentials()
 	require.NoError(t, err)
-	_, err = mgr.Set(name, host, &auth.Credential{AccessToken: "at_" + name, RefreshToken: "rt_" + name}, scopes, false, "")
+	_, err = mgr.Set(name, "my.sepay.vn", &auth.Credential{AccessToken: "at_" + name, RefreshToken: "rt_" + name}, scopes, false, "")
 	require.NoError(t, err)
 }
 

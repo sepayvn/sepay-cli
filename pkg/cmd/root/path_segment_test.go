@@ -39,7 +39,7 @@ func TestPathSegment_EveryIDCommandRefusesBeforeAnyRequest(t *testing.T) {
 		{"apikey", "delete", "ID", "--yes"},
 		{"pg", "order", "get", "ID"},
 		{"bankhub", "company", "get", "ID"},
-		{"bankhub", "company", "edit", "ID", "--name", "x", "--yes"},
+		{"bankhub", "company", "update", "ID", "--name", "x", "--yes"},
 		{"bankhub", "bank-account", "get", "ID"},
 		{"bankhub", "transaction", "get", "ID"},
 		{"einvoice", "account", "get", "ID"},

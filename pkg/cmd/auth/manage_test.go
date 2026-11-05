@@ -17,8 +17,8 @@ import (
 
 func TestSwitch_ChangesActive(t *testing.T) {
 	f, _, out, _ := testFactory(t, "")
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
-	seedProfile(t, f, "personal", "my.sepay.vn", []string{"sandbox"})
+	seedProfile(t, f, "work", []string{"read"})
+	seedProfile(t, f, "personal", []string{"sandbox"})
 
 	require.NoError(t, run(NewCmdSwitch(f), "personal"))
 	assert.Contains(t, out.String(), "personal")
@@ -41,7 +41,7 @@ func TestAuth_UnknownProfileIsAUsageError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := newFakeOAuth(t)
 			f, _, out, errOut := testFactory(t, srv.URL)
-			seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+			seedProfile(t, f, "work", []string{"read"})
 			f.Global.Output = "json"
 
 			err := invoke(f)
@@ -66,7 +66,7 @@ func TestAuth_UnknownProfileIsAUsageError(t *testing.T) {
 
 func TestSwitch_NoArgNonInteractive(t *testing.T) {
 	f, _, _, _ := testFactory(t, "")
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 
 	err := run(NewCmdSwitch(f))
 	require.Error(t, err)
@@ -85,7 +85,7 @@ func TestSwitch_NoArgNoProfiles(t *testing.T) {
 func TestLogout_RevokesAndForgets(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, out, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdLogout(f)))
@@ -102,8 +102,8 @@ func TestLogout_All(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
 	f.Global.Yes = true
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
-	seedProfile(t, f, "personal", "my.sepay.vn", []string{"sandbox"})
+	seedProfile(t, f, "work", []string{"read"})
+	seedProfile(t, f, "personal", []string{"sandbox"})
 
 	require.NoError(t, run(NewCmdLogout(f), "--all"))
 	assert.Equal(t, 2, srv.revokeAllCalls(), "logout --all revokes every session of each account server-side")
@@ -116,7 +116,7 @@ func TestLogout_RevokeFailureKeepsTheCredential(t *testing.T) {
 	srv := newFakeOAuth(t)
 	srv.revokeStatus = 500 // server-side revoke fails
 	f, _, out, errOut := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "work"
 
 	err := run(NewCmdLogout(f))
@@ -136,7 +136,7 @@ func TestLogout_FileFallbackProfileGetsNoEvictionWarning(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, out, errOut := testFactory(t, srv.URL)
 	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
-	f.Config = func() (*config.Config, error) { return config.Load() }
+	f.Config = config.Load
 
 	mgr, err := f.Credentials()
 	require.NoError(t, err)
@@ -155,8 +155,8 @@ func TestLogout_FileFallbackProfileGetsNoEvictionWarning(t *testing.T) {
 func TestLogout_LeavesNoActiveProfile_EverySurfaceAgrees(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, out, errOut := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
-	seedProfile(t, f, "personal", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
+	seedProfile(t, f, "personal", []string{"read"})
 	mgr, _ := f.Credentials()
 	require.NoError(t, mgr.SetActive("work"))
 	f.Global.Profile = "work"
@@ -180,8 +180,8 @@ func TestRevoke_All(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
 	f.Global.Yes = true
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
-	seedProfile(t, f, "personal", "my.sepay.vn", []string{"sandbox"})
+	seedProfile(t, f, "work", []string{"read"})
+	seedProfile(t, f, "personal", []string{"sandbox"})
 
 	require.NoError(t, run(NewCmdRevoke(f), "--all"))
 	assert.Equal(t, 1, srv.revokeAllCalls(), "--all revokes every session of the active account in one call")
@@ -193,7 +193,7 @@ func TestRevoke_All(t *testing.T) {
 func TestRevoke_TokenID(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, out, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 
 	require.NoError(t, run(NewCmdRevoke(f), "--token", "sess_1"))
 	assert.Contains(t, out.String(), "Revoked session sess_1")
@@ -203,7 +203,7 @@ func TestRevoke_TokenID(t *testing.T) {
 func TestRevoke_MutuallyExclusive(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 
 	err := run(NewCmdRevoke(f), "--all", "--token", "sess_1")
 	require.Error(t, err)
@@ -213,7 +213,7 @@ func TestRevoke_MutuallyExclusive(t *testing.T) {
 func TestRevoke_ProfileKeepsLocal(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 
 	require.NoError(t, run(NewCmdRevoke(f), "work"))
 	assert.Equal(t, 1, srv.revokeCount())
@@ -235,7 +235,7 @@ func storedRevoked(t *testing.T, f *cmdutil.Factory, name string) bool {
 func TestRevoke_ProfileIsShownRevoked(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, out, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 
 	require.NoError(t, run(NewCmdRevoke(f), "work"))
 	assert.True(t, storedRevoked(t, f, "work"))
@@ -276,7 +276,7 @@ func TestRevoke_TokenIDMarksOnlyTheCurrentSession(t *testing.T) {
 			srv := newFakeOAuth(t)
 			srv.sessions = []auth.TokenSession{{ID: "sess_current", Current: true}, {ID: "sess_other"}}
 			f, _, _, _ := testFactory(t, srv.URL)
-			seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+			seedProfile(t, f, "work", []string{"read"})
 
 			require.NoError(t, run(NewCmdRevoke(f), "--token", tc.id))
 			assert.Equal(t, tc.revoked, storedRevoked(t, f, "work"))

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -37,7 +37,7 @@ func Truncate(s string, width int) string {
 	var b strings.Builder
 	colored := false
 	for i, n := 0, 0; i < len(s) && n < width-1; {
-		if loc := ansiSeq.FindStringIndex(s[i:]); loc != nil && loc[0] == 0 {
+		if loc := ansiSeq.FindStringIndex(s[i:]); len(loc) == 2 && loc[0] == 0 {
 			b.WriteString(s[i : i+loc[1]])
 			colored = true
 			i += loc[1]
@@ -63,7 +63,7 @@ func stripUnsafe(s string) string {
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
 		if s[i] == 0x1b { // ESC
-			if loc := ansiSeq.FindStringIndex(s[i:]); loc != nil && loc[0] == 0 {
+			if loc := ansiSeq.FindStringIndex(s[i:]); len(loc) == 2 && loc[0] == 0 {
 				b.WriteString(s[i : i+loc[1]]) // keep an SGR color sequence
 				i += loc[1]
 				continue

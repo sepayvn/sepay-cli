@@ -12,42 +12,41 @@ import (
 func TestAssertCredentialHost(t *testing.T) {
 	cases := []struct {
 		name      string
-		env       string
 		url       string
 		canonical string
 		wantErr   bool
 	}{
-		{name: "sandbox api host", env: config.EnvSandbox, url: "https://cli-api-sandbox.sepay.vn/v2", canonical: baseURLForEnv(config.EnvSandbox)},
-		{name: "sandbox pg host", env: config.EnvSandbox, url: "https://pgapi-sandbox.sepay.vn", canonical: pgBaseURLForEnv(config.EnvSandbox)},
-		{name: "sandbox bankhub host", env: config.EnvSandbox, url: "https://bankhub-api-sandbox.sepay.vn", canonical: bankHubBaseURLForEnv(config.EnvSandbox)},
-		{name: "sandbox einvoice host", env: config.EnvSandbox, url: "https://einvoice-api-sandbox.sepay.vn", canonical: einvoiceBaseURLForEnv(config.EnvSandbox)},
-		{name: "production api host", env: config.EnvProduction, url: "https://cli-api.sepay.vn/v2", canonical: baseURLForEnv(config.EnvProduction)},
-		{name: "production pg host", env: config.EnvProduction, url: "https://pgapi.sepay.vn", canonical: pgBaseURLForEnv(config.EnvProduction)},
-		{name: "oauth host refused in prod", env: config.EnvProduction, url: "https://my.sepay.vn", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
-		{name: "oauth host refused in sandbox", env: config.EnvSandbox, url: "https://my.sepay.vn", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
-		{name: "loopback always allowed", env: config.EnvSandbox, url: "http://127.0.0.1:8079/api/v2", canonical: baseURLForEnv(config.EnvSandbox)},
-		{name: "localhost always allowed", env: config.EnvProduction, url: "http://localhost:8080/v2", canonical: baseURLForEnv(config.EnvProduction)},
+		{name: "sandbox api host", url: "https://cli-api-sandbox.sepay.vn/v2", canonical: baseURLForEnv(config.EnvSandbox)},
+		{name: "sandbox pg host", url: "https://pgapi-sandbox.sepay.vn", canonical: pgBaseURLForEnv(config.EnvSandbox)},
+		{name: "sandbox bankhub host", url: "https://bankhub-api-sandbox.sepay.vn", canonical: bankHubBaseURLForEnv(config.EnvSandbox)},
+		{name: "sandbox einvoice host", url: "https://einvoice-api-sandbox.sepay.vn", canonical: einvoiceBaseURLForEnv(config.EnvSandbox)},
+		{name: "production api host", url: "https://cli-api.sepay.vn/v2", canonical: baseURLForEnv(config.EnvProduction)},
+		{name: "production pg host", url: "https://pgapi.sepay.vn", canonical: pgBaseURLForEnv(config.EnvProduction)},
+		{name: "oauth host refused in prod", url: "https://my.sepay.vn", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
+		{name: "oauth host refused in sandbox", url: "https://my.sepay.vn", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
+		{name: "loopback always allowed", url: "http://127.0.0.1:8079/api/v2", canonical: baseURLForEnv(config.EnvSandbox)},
+		{name: "localhost always allowed", url: "http://localhost:8080/v2", canonical: baseURLForEnv(config.EnvProduction)},
 
-		{name: "pg host refused for the api client", env: config.EnvSandbox, url: "https://pgapi-sandbox.sepay.vn/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
-		{name: "bankhub host refused for the pg client", env: config.EnvSandbox, url: "https://bankhub-api-sandbox.sepay.vn", canonical: pgBaseURLForEnv(config.EnvSandbox), wantErr: true},
-		{name: "einvoice host refused for the pg client", env: config.EnvProduction, url: "https://einvoice-api.sepay.vn", canonical: pgBaseURLForEnv(config.EnvProduction), wantErr: true},
-		{name: "api host refused for the einvoice client", env: config.EnvProduction, url: "https://cli-api.sepay.vn", canonical: einvoiceBaseURLForEnv(config.EnvProduction), wantErr: true},
+		{name: "pg host refused for the api client", url: "https://pgapi-sandbox.sepay.vn/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
+		{name: "bankhub host refused for the pg client", url: "https://bankhub-api-sandbox.sepay.vn", canonical: pgBaseURLForEnv(config.EnvSandbox), wantErr: true},
+		{name: "einvoice host refused for the pg client", url: "https://einvoice-api.sepay.vn", canonical: pgBaseURLForEnv(config.EnvProduction), wantErr: true},
+		{name: "api host refused for the einvoice client", url: "https://cli-api.sepay.vn", canonical: einvoiceBaseURLForEnv(config.EnvProduction), wantErr: true},
 
-		{name: "prod api host refused in sandbox", env: config.EnvSandbox, url: "https://cli-api.sepay.vn/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
-		{name: "sandbox api host refused in prod", env: config.EnvProduction, url: "https://cli-api-sandbox.sepay.vn/v2", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
+		{name: "prod api host refused in sandbox", url: "https://cli-api.sepay.vn/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
+		{name: "sandbox api host refused in prod", url: "https://cli-api-sandbox.sepay.vn/v2", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
 
-		{name: "arbitrary host refused", env: config.EnvProduction, url: "https://evil.example/v2", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
-		{name: "lookalike suffix refused", env: config.EnvProduction, url: "https://cli-api.sepay.vn.evil.com/v2", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
-		{name: "public ip refused", env: config.EnvSandbox, url: "https://203.0.113.9:8080/api/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
-		{name: "private ip refused", env: config.EnvSandbox, url: "http://192.168.1.10:8079/api/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
+		{name: "arbitrary host refused", url: "https://evil.example/v2", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
+		{name: "lookalike suffix refused", url: "https://cli-api.sepay.vn.evil.com/v2", canonical: baseURLForEnv(config.EnvProduction), wantErr: true},
+		{name: "public ip refused", url: "https://203.0.113.9:8080/api/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
+		{name: "private ip refused", url: "http://192.168.1.10:8079/api/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
 
-		{name: "uppercase prod host refused in sandbox", env: config.EnvSandbox, url: "https://CLI-API.SEPAY.VN/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
-		{name: "trailing dot normalized", env: config.EnvProduction, url: "https://cli-api.sepay.vn./v2", canonical: baseURLForEnv(config.EnvProduction)},
+		{name: "uppercase prod host refused in sandbox", url: "https://CLI-API.SEPAY.VN/v2", canonical: baseURLForEnv(config.EnvSandbox), wantErr: true},
+		{name: "trailing dot normalized", url: "https://cli-api.sepay.vn./v2", canonical: baseURLForEnv(config.EnvProduction)},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := AssertCredentialHost(tc.env, tc.url, "test", tc.canonical)
+			err := AssertCredentialHost(tc.url, "test", tc.canonical)
 			if tc.wantErr {
 				require.Error(t, err)
 				var flagErr *FlagError
@@ -104,13 +103,13 @@ func TestAssertOAuthHost(t *testing.T) {
 // Accepting the OAuth host would let SEPAY_SANDBOX_PG_API_URL=https://my.sepay.vn reach production.
 func TestAssertCredentialHost_OAuthHostIsNotASandboxTarget(t *testing.T) {
 	for _, env := range []string{config.EnvSandbox, config.EnvProduction} {
-		err := AssertCredentialHost(env, "https://"+defaultOAuthHost+"/api/v2", "test", baseURLForEnv(env))
+		err := AssertCredentialHost("https://"+defaultOAuthHost+"/api/v2", "test", baseURLForEnv(env))
 		require.Error(t, err, "env=%s: the OAuth host is not a credential target", env)
 		assert.Contains(t, err.Error(), "refusing to send credentials")
 	}
 	require.NoError(t, AssertOAuthHost("https://"+defaultOAuthHost, "--hostname"))
-	require.NoError(t, AssertCredentialHost(config.EnvSandbox, "https://pgapi-sandbox.sepay.vn", "test", pgBaseURLForEnv(config.EnvSandbox)))
-	require.NoError(t, AssertCredentialHost(config.EnvProduction, "https://pgapi.sepay.vn", "test", pgBaseURLForEnv(config.EnvProduction)))
+	require.NoError(t, AssertCredentialHost("https://pgapi-sandbox.sepay.vn", "test", pgBaseURLForEnv(config.EnvSandbox)))
+	require.NoError(t, AssertCredentialHost("https://pgapi.sepay.vn", "test", pgBaseURLForEnv(config.EnvProduction)))
 }
 
 func TestAssertCheckoutHost(t *testing.T) {
@@ -149,7 +148,7 @@ func TestAssertCredentialHost_RejectsTheCheckoutHost(t *testing.T) {
 		config.EnvProduction: "https://pay.sepay.vn/v1/checkout",
 		config.EnvSandbox:    "https://pay-sandbox.sepay.vn/v1/checkout",
 	} {
-		require.Error(t, AssertCredentialHost(env, url, "Location", pgBaseURLForEnv(env)), "env=%s", env)
+		require.Error(t, AssertCredentialHost(url, "Location", pgBaseURLForEnv(env)), "env=%s", env)
 		require.NoError(t, AssertCheckoutHost(url, "Location"), "env=%s", env)
 	}
 }

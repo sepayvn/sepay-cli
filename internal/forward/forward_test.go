@@ -5,10 +5,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/sepayvn/sepay-cli/internal/forward"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSend_2xxAndNon2xx(t *testing.T) {
@@ -29,22 +32,12 @@ func TestSend_2xxAndNon2xx(t *testing.T) {
 			defer srv.Close()
 
 			fwd, err := forward.NewForwarder(srv.URL, false)
-			if err != nil {
-				t.Fatalf("NewForwarder: %v", err)
-			}
+			require.NoError(t, err)
 			res, err := fwd.Send(context.Background(), []byte(`{}`), nil)
-			if err != nil {
-				t.Fatalf("Send: %v", err)
-			}
-			if res.StatusCode != tt.status {
-				t.Fatalf("status = %d, want %d", res.StatusCode, tt.status)
-			}
-			if res.OK() != (tt.status < 300) {
-				t.Fatalf("OK() = %v for status %d", res.OK(), tt.status)
-			}
-			if string(res.Body) != tt.body {
-				t.Fatalf("body = %q, want %q", res.Body, tt.body)
-			}
+			require.NoError(t, err)
+			require.Equal(t, tt.status, res.StatusCode)
+			require.Equal(t, tt.status < 300, res.OK(), "OK() for status %d", tt.status)
+			require.Equal(t, tt.body, string(res.Body))
 		})
 	}
 }
@@ -52,27 +45,20 @@ func TestSend_2xxAndNon2xx(t *testing.T) {
 func TestSend_ForwardsPayloadAndHeadersVerbatim(t *testing.T) {
 	var gotBody []byte
 	var gotSig string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
 		gotSig = r.Header.Get("X-Sepay-Signature")
 	}))
 	defer srv.Close()
 
 	fwd, err := forward.NewForwarder(srv.URL, false)
-	if err != nil {
-		t.Fatalf("NewForwarder: %v", err)
-	}
+	require.NoError(t, err)
 	payload := []byte(`{"type":"payment_in","transferAmount":100000}`)
 	headers := http.Header{"X-Sepay-Signature": {"sig-abc123"}}
-	if _, err := fwd.Send(context.Background(), payload, headers); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if string(gotBody) != string(payload) {
-		t.Fatalf("forwarded body = %q, want %q", gotBody, payload)
-	}
-	if gotSig != "sig-abc123" {
-		t.Fatalf("forwarded signature = %q, want sig-abc123", gotSig)
-	}
+	_, err = fwd.Send(context.Background(), payload, headers)
+	require.NoError(t, err)
+	require.Equal(t, string(payload), string(gotBody))
+	require.Equal(t, "sig-abc123", gotSig)
 }
 
 func TestSend_ConnectionRefused(t *testing.T) {
@@ -81,12 +67,9 @@ func TestSend_ConnectionRefused(t *testing.T) {
 	srv.Close() // nothing listens now
 
 	fwd, err := forward.NewForwarder(addr, false)
-	if err != nil {
-		t.Fatalf("NewForwarder: %v", err)
-	}
-	if _, err := fwd.Send(context.Background(), []byte(`{}`), nil); err == nil {
-		t.Fatal("Send err = nil, want a transport error")
-	}
+	require.NoError(t, err)
+	_, err = fwd.Send(context.Background(), []byte(`{}`), nil)
+	require.Error(t, err, "want a transport error")
 }
 
 func TestNewForwarder_Normalize(t *testing.T) {
@@ -107,20 +90,12 @@ func TestNewForwarder_Normalize(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fwd, err := forward.NewForwarder(tt.addr, false)
 			if tt.wantErr {
-				if err == nil {
-					t.Fatal("err = nil, want error")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Fatalf("NewForwarder: %v", err)
-			}
-			if fwd.Target() != tt.wantURL {
-				t.Fatalf("Target() = %q, want %q", fwd.Target(), tt.wantURL)
-			}
-			if fwd.IsLoopback() != tt.loopback {
-				t.Fatalf("IsLoopback() = %v, want %v", fwd.IsLoopback(), tt.loopback)
-			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantURL, fwd.Target())
+			require.Equal(t, tt.loopback, fwd.IsLoopback())
 		})
 	}
 }
@@ -139,12 +114,8 @@ func TestNewForwarder_IsPlaintextRemote(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.addr, func(t *testing.T) {
 			fwd, err := forward.NewForwarder(tt.addr, false)
-			if err != nil {
-				t.Fatalf("NewForwarder: %v", err)
-			}
-			if fwd.IsPlaintextRemote() != tt.want {
-				t.Fatalf("IsPlaintextRemote() = %v, want %v", fwd.IsPlaintextRemote(), tt.want)
-			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, fwd.IsPlaintextRemote())
 		})
 	}
 }
@@ -165,19 +136,13 @@ func TestNewForwarder_SkipTLSVerifyIsLoopbackOnly(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.addr, func(t *testing.T) {
-			fwd, err := forward.NewForwarder(tt.addr, true)
+			_, err := forward.NewForwarder(tt.addr, true)
 			if tt.allowed {
-				if err != nil {
-					t.Fatalf("NewForwarder: %v", err)
-				}
+				require.NoError(t, err)
 				return
 			}
-			if err == nil {
-				t.Fatalf("NewForwarder(%q, skip) = %v, want an error", tt.addr, fwd.Target())
-			}
-			if !strings.Contains(err.Error(), "--skip-tls-verify") {
-				t.Fatalf("error %q does not name the flag", err)
-			}
+			require.Error(t, err, "NewForwarder(%q, skip) accepted the target", tt.addr)
+			require.ErrorContains(t, err, "--skip-tls-verify", "error does not name the flag")
 		})
 	}
 }
@@ -190,36 +155,24 @@ func TestSend_SkipTLSVerifyReachesASelfSignedLoopbackHandler(t *testing.T) {
 	defer srv.Close()
 
 	strict, err := forward.NewForwarder(srv.URL, false)
-	if err != nil {
-		t.Fatalf("NewForwarder: %v", err)
-	}
-	if _, err := strict.Send(context.Background(), []byte(`{}`), nil); err == nil {
-		t.Fatal("a self-signed handler passed verification without --skip-tls-verify")
-	}
-	if strict.IsUnverifiedTLS() {
-		t.Fatal("IsUnverifiedTLS() = true without the flag")
-	}
+	require.NoError(t, err)
+	_, err = strict.Send(context.Background(), []byte(`{}`), nil)
+	require.Error(t, err, "a self-signed handler passed verification without --skip-tls-verify")
+	require.False(t, strict.IsUnverifiedTLS(), "IsUnverifiedTLS() without the flag")
 
 	lax, err := forward.NewForwarder(srv.URL, true)
-	if err != nil {
-		t.Fatalf("NewForwarder: %v", err)
-	}
+	require.NoError(t, err)
 	res, err := lax.Send(context.Background(), []byte(`{}`), nil)
-	if err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	if res.StatusCode != http.StatusOK || !lax.IsUnverifiedTLS() {
-		t.Fatalf("status = %d, IsUnverifiedTLS = %v", res.StatusCode, lax.IsUnverifiedTLS())
-	}
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.True(t, lax.IsUnverifiedTLS())
 }
 
 func TestForwarder_OriginCollapsesTheSpellingsOfOneHandler(t *testing.T) {
 	origin := func(addr string) string {
 		t.Helper()
 		f, err := forward.NewForwarder(addr, false)
-		if err != nil {
-			t.Fatalf("NewForwarder(%q): %v", addr, err)
-		}
+		require.NoError(t, err, "NewForwarder(%q)", addr)
 		return f.Origin()
 	}
 
@@ -228,22 +181,49 @@ func TestForwarder_OriginCollapsesTheSpellingsOfOneHandler(t *testing.T) {
 		"127.0.0.1:3000", "http://127.0.0.1:3000/", "LOCALHOST:3000", "[::1]:3000",
 	}
 	for _, pair := range [][2]string{{"localhost:80", "http://localhost"}, {"https://localhost:443/", "https://localhost/"}} {
-		if origin(pair[0]) != origin(pair[1]) {
-			t.Errorf("origin(%q)=%q and origin(%q)=%q name the same handler", pair[0], origin(pair[0]), pair[1], origin(pair[1]))
-		}
+		assert.Equal(t, origin(pair[1]), origin(pair[0]), "origin(%q) and origin(%q) name the same handler", pair[0], pair[1])
 	}
 	want := origin(same[0])
 	for _, addr := range same[1:] {
-		if got := origin(addr); got != want {
-			t.Errorf("origin(%q) = %q, want %q: it names the same handler", addr, got, want)
-		}
+		assert.Equal(t, want, origin(addr), "origin(%q) names the same handler", addr)
 	}
 
 	for _, addr := range []string{
 		"localhost:4000", "localhost:3000/hooks", "https://localhost:3000/", "example.test:3000",
 	} {
-		if got := origin(addr); got == want {
-			t.Errorf("origin(%q) = %q, but it is a different handler", addr, got)
-		}
+		assert.NotEqual(t, want, origin(addr), "origin(%q) is a different handler", addr)
 	}
+}
+
+func TestFailure_TellsWhyTheHandlerDidNotAnswer(t *testing.T) {
+	// Port 1 refuses; a just-closed httptest port can be taken by a test running in parallel.
+	closedURL := "http://127.0.0.1:1"
+
+	tlsSrv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer tlsSrv.Close()
+
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer slow.Close()
+	defer close(release)
+
+	send := func(t *testing.T, addr string, timeout time.Duration) error {
+		t.Helper()
+		fwd, err := forward.NewForwarder(addr, false)
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		_, err = fwd.Send(ctx, []byte("{}"), http.Header{})
+		require.Error(t, err)
+		return err
+	}
+
+	assert.Equal(t, "not responding (is your handler running?)", forward.Failure(send(t, closedURL, 5*time.Second)))
+	assert.Equal(t, "failed TLS verification (an untrusted or mismatched certificate)", forward.Failure(send(t, tlsSrv.URL, 5*time.Second)))
+	assert.Equal(t, "did not answer in time", forward.Failure(send(t, slow.URL, 100*time.Millisecond)))
 }

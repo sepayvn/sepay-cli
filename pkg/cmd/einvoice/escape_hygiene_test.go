@@ -37,7 +37,7 @@ func TestInvoiceGet_SanitizesServerStrings(t *testing.T) {
 		jq(poison("084e179d")), jq(poison("C26TSE")), jq(poison("issued")),
 		jq(poison("Cong ty ABC")), jq(poison("0123456789")),
 		jq(poison("https://x.test/a.pdf")), jq(poison("San pham 1")))
-	f, out, _ := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/084e179d": body}))
+	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/084e179d": body}))
 	require.NoError(t, run(f, "invoice", "get", "084e179d"))
 	assertClean(t, "invoice get", out.String())
 	require.Contains(t, out.String(), "084e179d")
@@ -48,7 +48,7 @@ func TestInvoiceGet_SanitizesServerStrings(t *testing.T) {
 func TestAccountGet_SanitizesServerStrings(t *testing.T) {
 	body := fmt.Sprintf(`{"success":true,"data":{"id":%s,"provider":%s,"active":1,"tax_authority_approved_date":%s,"templates":[{"template_code":"1","invoice_series":"C26TSE","invoice_label":%s}]}}`,
 		jq(poison("pa_1")), jq(poison("matbao")), jq(poison("2026-01-01")), jq(poison("Mau 01")))
-	f, out, _ := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/provider-accounts/pa_1": body}))
+	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/provider-accounts/pa_1": body}))
 	require.NoError(t, run(f, "account", "get", "pa_1"))
 	assertClean(t, "account get", out.String())
 	require.Contains(t, out.String(), "matbao")
@@ -58,7 +58,7 @@ func TestAccountGet_SanitizesServerStrings(t *testing.T) {
 func TestInvoiceCreateStatus_SanitizesServerStrings(t *testing.T) {
 	body := fmt.Sprintf(`{"success":true,"data":{"reference_code":%s,"status":"Failed","message":%s}}`,
 		jq(poison("trk_1")), jq(poison("provider rejected")))
-	f, out, _ := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/create/check/trk_1": body}))
+	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/create/check/trk_1": body}))
 	require.Error(t, run(f, "invoice", "create-status", "trk_1")) // Failed exits non-zero
 	assertClean(t, "invoice create-status", out.String())
 	require.Contains(t, out.String(), "provider rejected")
@@ -67,14 +67,14 @@ func TestInvoiceCreateStatus_SanitizesServerStrings(t *testing.T) {
 func TestInvoiceList_SanitizesServerStrings(t *testing.T) {
 	body := fmt.Sprintf(`{"success":true,"data":{"items":[{"reference_code":%s,"invoice_number":"589","status":%s,"issued_date":"2026-01-26","total_amount":220000}],"paging":{"current_page":1,"page_count":1,"total":1}}}`,
 		jq(poison("084e179d")), jq(poison("issued")))
-	f, out, _ := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices": body}))
+	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices": body}))
 	require.NoError(t, run(f, "invoice", "list"))
 	assertClean(t, "invoice list", out.String())
 }
 
 func TestQuota_SanitizesServerStrings(t *testing.T) {
 	body := fmt.Sprintf(`{"success":true,"data":{"quota_remaining":5,"tax_authority_approved_date":%s}}`, jq(poison("2026-01-01")))
-	f, out, _ := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/usage": body}))
+	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/usage": body}))
 	require.NoError(t, run(f, "quota"))
 	assertClean(t, "quota", out.String())
 }
@@ -83,7 +83,7 @@ func TestQuota_SanitizesServerStrings(t *testing.T) {
 func TestInvoiceGet_JSONKeepsRawValue(t *testing.T) {
 	body := fmt.Sprintf(`{"success":true,"data":{"reference_code":%s,"invoice_number":"589","status":"issued","issued_date":"2026-01-26","total_before_tax":1,"tax_amount":0,"total_amount":2}}`,
 		jq(poison("084e179d")))
-	f, out, _ := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/084e179d": body}))
+	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/084e179d": body}))
 	f.Global.Output = "json"
 	require.NoError(t, run(f, "invoice", "get", "084e179d"))
 

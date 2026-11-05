@@ -1,0 +1,60 @@
+name: Bug report
+description: Something in the sepay CLI does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issue? Do not file it here. Follow [SECURITY.md](https://github.com/sepayvn/sepay-cli/blob/main/SECURITY.md).
+        Question about your SePay account, a transaction or the API itself? See [SUPPORT.md](https://github.com/sepayvn/sepay-cli/blob/main/.github/SUPPORT.md).
+  - type: textarea
+    id: version
+    attributes:
+      label: sepay version
+      description: Output of `sepay version`.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: macOS 15 arm64, Ubuntu 24.04 amd64, Windows 11 amd64
+    validations:
+      required: true
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Install channel
+      options:
+        - Homebrew
+        - Scoop
+        - install.sh (curl | sh)
+        - npm
+        - go install
+        - GitHub Releases (manual download)
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact command you ran.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output with -v
+      description: Run the command again with `-v` and paste the output. Tokens and OTPs are redacted, but check for anything else private before posting.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen instead.
+    validations:
+      required: true

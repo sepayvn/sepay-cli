@@ -31,7 +31,7 @@ func TestHasDotSegment(t *testing.T) {
 // never sent, whichever command built it.
 func TestClient_RefusesDotSegmentWithoutSending(t *testing.T) {
 	sent := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { sent++ }))
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { sent++ }))
 	t.Cleanup(srv.Close)
 	c := NewClient(srv.URL+"/v2", "tok")
 	ctx := context.Background()

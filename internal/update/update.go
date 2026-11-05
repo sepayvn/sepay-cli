@@ -29,7 +29,7 @@ const (
 	DisableEnv = "SEPAY_NO_UPDATE_NOTIFIER"
 
 	registryURL = "https://registry.npmjs.org/sepay-cli/"
-	// installScriptURL must match the get.sepay.vn redirect to scripts/install.sh.
+	// installScriptURL must match the get.sepay.vn redirect to the sepay-cli-install.sh release asset.
 	installScriptURL = "https://get.sepay.vn/sepay-cli-install.sh"
 	interval         = 24 * time.Hour
 	stateName        = "update-state.json"
@@ -135,7 +135,7 @@ func (c *Checker) fetch(ctx context.Context, current string) (state, error) {
 
 // get treats 404 as not found: a source build was never published.
 func (c *Checker) get(ctx context.Context, path string, v any) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, http.NoBody)
 	if err != nil {
 		return false, err
 	}

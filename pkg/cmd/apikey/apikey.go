@@ -31,12 +31,12 @@ func NewCmdAPIKey(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "apikey <command>",
 		Aliases: []string{"ak"},
-		Short:   "Manage API keys",
+		Short:   "API keys for non-CLI integrations",
 		Long: `Manage the static API keys a non-CLI integration authenticates with.
 
 An API key is sent as "Authorization: Bearer <api_key>" on SePay API v2 and acts
 for the whole company. The CLI authenticates with OAuth and never presents one.
-Hosts and headers: ` + "`sepay docs api`" + `.
+Hosts and headers: https://developer.sepay.vn/en/sepay-api/v2/xac-thuc.
 
 Sandbox only: every subcommand refuses --env production. A production key is
 created in the my.sepay.vn portal.
@@ -57,7 +57,7 @@ it everywhere else, so store it then or create a replacement.`,
 	)
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnEnvs:     "sandbox",
-		cmdutil.AnnGuidance: "These keys are for a non-CLI integration, not for this CLI. Only create returns the key in full — the server masks it on every other endpoint. Host and header: `sepay docs api`.",
+		cmdutil.AnnGuidance: "These keys are for a non-CLI integration, not for this CLI. Only create returns the key in full; the server masks it on every other endpoint. Host and header: https://developer.sepay.vn/en/sepay-api/v2/xac-thuc.",
 	})
 }
 
@@ -120,7 +120,9 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List API keys (sandbox only)",
-		Args:    cobra.NoArgs,
+		Example: `  sepay apikey list
+  sepay apikey list --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runList(cmd.Context(), f)
 		},
@@ -148,9 +150,12 @@ func runList(ctx context.Context, f *cmdutil.Factory) error {
 
 func newGetCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "get [xid]",
+		Use:   "get <api-key-xid>",
 		Short: "Show an API key (sandbox only)",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Show one API key. Its value is masked: only "apikey create" prints a key in full.
+
+<api-key-xid> is the ID column of "sepay apikey list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			xid, err := pickOne(cmd.Context(), f, cmdutil.FirstArg(args))
 			if err != nil {
@@ -205,6 +210,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "create",
 		Aliases: []string{"new"},
 		Short:   "Create an API key (sandbox only)",
+		Example: `  sepay apikey create --name "billing service"`,
 		Args:    cmdutil.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
@@ -255,10 +261,14 @@ func newUpdateCmd(f *cmdutil.Factory) *cobra.Command {
 	var name string
 	var active bool
 	cmd := &cobra.Command{
-		Use:     "update [xid]",
+		Use:     "update <api-key-xid>",
 		Aliases: []string{"edit"},
 		Short:   "Update an API key's name or status (sandbox only)",
-		Args:    cmdutil.MaximumNArgs(1),
+		Long: `Change an API key's name or active status; only the flags you pass change. With
+no flags on a terminal, each field is asked for, blank to keep.
+
+<api-key-xid> is the ID column of "sepay apikey list". Prompted for on a terminal; required otherwise.`,
+		Args: cmdutil.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fl := cmd.Flags()
 			body := map[string]any{}
@@ -351,10 +361,13 @@ func runUpdate(ctx context.Context, f *cmdutil.Factory, xid string, body map[str
 
 func newDeleteCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "delete [xid]",
+		Use:     "delete <api-key-xid>",
 		Aliases: []string{"rm", "del"},
 		Short:   "Delete an API key (sandbox only)",
-		Args:    cobra.MaximumNArgs(1),
+		Long: `Delete an API key.
+
+<api-key-xid> is the ID column of "sepay apikey list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			xid, err := pickOne(cmd.Context(), f, cmdutil.FirstArg(args))
 			if err != nil {

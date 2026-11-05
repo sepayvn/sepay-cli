@@ -26,7 +26,7 @@ type webhook struct {
 }
 
 func newWebhookCmd(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "webhook <command>", Aliases: []string{"wh"}, Short: "Manage the Bank Hub webhook"}
+	cmd := &cobra.Command{Use: "webhook <command>", Aliases: []string{"wh"}, Short: "The Bank Hub merchant webhook"}
 	cmd.AddCommand(newWebhookListCmd(f), newWebhookSetCmd(f))
 	return cmd
 }
@@ -36,15 +36,20 @@ func newWebhookSetCmd(f *cmdutil.Factory) *cobra.Command {
 	var secret string
 	var active bool
 	cmd := &cobra.Command{
-		Use:   "set [url]",
-		Short: "Create or update the merchant webhook (upsert)",
-		Args:  cmdutil.MaximumNArgs(1),
+		Use:   "set <url>",
+		Short: "Create or replace the merchant webhook",
+		Long: `Create the merchant webhook, or replace it when one exists: a merchant has one.
+It carries account-linking events; transfers on linked accounts report over IPN
+(sepay bankhub ipn).
+
+Prompted for on a terminal; required otherwise.`,
+		Args: cmdutil.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			url, err := f.InputOrArg(cmdutil.FirstArg(args), "a webhook URL", "Webhook URL")
 			if err != nil {
 				return err
 			}
-			// The upsert replaces the only webhook, so reject a bad URL before the confirm.
+			// set replaces the only webhook, so reject a bad URL before the confirm.
 			if err := cmdutil.ValidateDestinationURL(url, "webhook URL"); err != nil {
 				return err
 			}
@@ -72,7 +77,7 @@ func newWebhookSetCmd(f *cmdutil.Factory) *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.StringSliceVar(&events, "events", nil, "Events to subscribe: '*' or comma-separated event names")
+	fl.StringSliceVar(&events, "events", nil, "Events to deliver: '*' or comma-separated event names; a new webhook without it receives none")
 	fl.StringVar(&secret, "secret", "", "Signing secret key, or - to read it from stdin")
 	fl.BoolVar(&active, "active", true, "Whether the webhook is active")
 	return cmdutil.Annotate(cmd, map[string]string{
@@ -102,13 +107,9 @@ func runWebhookSet(ctx context.Context, f *cmdutil.Factory, body map[string]any)
 	w.SecretKey = cmdutil.MaskSecret(w.SecretKey)
 
 	return f.RenderOutput(w, func() error {
-		events := "*"
-		if len(w.AllowEvents) > 0 {
-			events = strings.Join(w.AllowEvents, ", ")
-		}
 		f.Printf(
 			"%s webhook set\nURL:      %s\nActive:   %s\nEvents:   %s\n",
-			f.SuccessIcon(), w.WebhookURL, f.YesNo(int(w.Active) == 1), events)
+			f.SuccessIcon(), w.WebhookURL, f.YesNo(int(w.Active) == 1), eventsLabel(w.AllowEvents))
 		return nil
 	})
 }
@@ -116,9 +117,11 @@ func runWebhookSet(ctx context.Context, f *cmdutil.Factory, body map[string]any)
 func newWebhookListCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Aliases: []string{"ls"},
-		Short:   "Show the merchant webhook configuration",
-		Args:    cobra.NoArgs,
+		Aliases: []string{"ls", "get", "show"},
+		Short:   "Show the merchant webhook (one per merchant)",
+		Example: `  sepay bankhub webhook list
+  sepay bankhub webhook list --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runWebhookList(cmd.Context(), f)
 		},
@@ -150,14 +153,18 @@ func runWebhookList(ctx context.Context, f *cmdutil.Factory) error {
 			fmt.Fprintln(f.IOStreams.Out, "No webhook configured.")
 			return nil
 		}
-		events := "*"
-		if len(w.AllowEvents) > 0 {
-			events = strings.Join(w.AllowEvents, ", ")
-		}
 		f.Printf(
 			"URL:      %s\nAuth:     %s\nSecret:   %s\nContent:  %s\nActive:   %s\nEvents:   %s\n",
 			w.WebhookURL, jsonfmt.OrDash(w.AuthType), jsonfmt.OrDash(w.SecretKey),
-			jsonfmt.OrDash(w.RequestContentType), f.YesNo(int(w.Active) == 1), events)
+			jsonfmt.OrDash(w.RequestContentType), f.YesNo(int(w.Active) == 1), eventsLabel(w.AllowEvents))
 		return nil
 	})
+}
+
+// eventsLabel names what the webhook receives: Bank Hub delivers nothing when allow_events is null or empty.
+func eventsLabel(events []string) string {
+	if len(events) == 0 {
+		return "none"
+	}
+	return strings.Join(events, ", ")
 }

@@ -32,11 +32,12 @@ func run() cmdutil.ExitCode {
 
 	newer := checkForUpdate(ctx)
 
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
+	if cmd, err := rootCmd.ExecuteContextC(ctx); err != nil {
 		// A cancelled context surfaces as context.Canceled or a transport error naming the signal.
 		if ctx.Err() != nil {
 			err = cmdutil.ErrInterrupted
 		}
+		f.UsageCommand = cmd.CommandPath()
 		return cmdutil.HandleError(f, err)
 	}
 	if f.Global.Output == "table" && !f.Global.Quiet {

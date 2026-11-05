@@ -115,7 +115,7 @@ func TestWebhookDelivers(t *testing.T) {
 		{
 			name:  "skip_if_no_code drops an event that carries no code",
 			hook:  func() Webhook { w := hookFor("ba_1"); w.SkipIfNoCode = true; return w }(),
-			event: eventPaymentIn, want: matchDrops, why: "without a payment code",
+			event: eventPaymentIn, want: matchDrops, why: "without a pay code",
 		},
 		{
 			name:  "skip_if_no_code is no obstacle once a code is present",
@@ -139,14 +139,18 @@ func TestWebhookDelivers(t *testing.T) {
 		},
 		{
 			name: "a multi webhook off its list still drops what its only_va gate drops",
-			hook: Webhook{BankMode: "multi", EventType: "All", Active: true,
-				BankAccountXIDs: []string{"ba_7"}, OnlyVA: true},
+			hook: Webhook{
+				BankMode: "multi", EventType: "All", Active: true,
+				BankAccountXIDs: []string{"ba_7"}, OnlyVA: true,
+			},
 			event: eventPaymentIn, want: matchDrops, why: "virtual-account transfers only",
 		},
 		{
 			name: "a multi webhook off its list still drops the wrong direction",
-			hook: Webhook{BankMode: "multi", EventType: "In_only", Active: true,
-				BankAccountXIDs: []string{"ba_7"}},
+			hook: Webhook{
+				BankMode: "multi", EventType: "In_only", Active: true,
+				BankAccountXIDs: []string{"ba_7"},
+			},
 			event: eventPaymentOut, want: matchDrops, why: "incoming transfers only",
 		},
 	}
@@ -177,8 +181,10 @@ func TestDeliverable(t *testing.T) {
 		{name: "only inactive webhooks", hooks: []Webhook{inactive}, why: "no active webhook covers this company"},
 		{name: "a webhook elsewhere", hooks: []Webhook{hookFor("ba_9")}, why: "no active webhook targets this bank account"},
 		{name: "a webhook that filters the event out", hooks: []Webhook{vaOnly}, why: "virtual-account transfers only"},
-		{name: "one webhook covering all rescues an account another filters out",
-			hooks: []Webhook{vaOnly, allAccountsHook()}, ok: true},
+		{
+			name:  "one webhook covering all rescues an account another filters out",
+			hooks: []Webhook{vaOnly, allAccountsHook()}, ok: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -194,8 +200,10 @@ func TestDeliverable(t *testing.T) {
 // A multi webhook (bank_account_id = 0) covers every account in sandbox until a filter proves the drop.
 func TestWebhookCoverage_MultiAccount(t *testing.T) {
 	multi := func(onlyVA bool, xids ...string) Webhook {
-		return Webhook{ID: "wh_m", BankMode: "multi", EventType: "All", Active: true,
-			BankAccountXIDs: xids, OnlyVA: onlyVA}
+		return Webhook{
+			ID: "wh_m", BankMode: "multi", EventType: "All", Active: true,
+			BankAccountXIDs: xids, OnlyVA: onlyVA,
+		}
 	}
 
 	cases := []struct {
@@ -207,10 +215,14 @@ func TestWebhookCoverage_MultiAccount(t *testing.T) {
 	}{
 		{name: "the first account on the list", hook: multi(false, "ba_3", "ba_4"), account: "ba_3", ok: true},
 		{name: "the second account on the list", hook: multi(false, "ba_3", "ba_4"), account: "ba_4", ok: true},
-		{name: "an account off the list is undecidable, so the run is allowed",
-			hook: multi(false, "ba_3"), account: "ba_5", ok: true},
-		{name: "an account off the list whose only_va gate drops the event is refused",
-			hook: multi(true, "ba_3"), account: "ba_5", why: "virtual-account transfers only"},
+		{
+			name: "an account off the list is undecidable, so the run is allowed",
+			hook: multi(false, "ba_3"), account: "ba_5", ok: true,
+		},
+		{
+			name: "an account off the list whose only_va gate drops the event is refused",
+			hook: multi(true, "ba_3"), account: "ba_5", why: "virtual-account transfers only",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -242,8 +254,10 @@ func TestAssertDeliverable(t *testing.T) {
 	noCode := hookFor("ba_1")
 	noCode.SkipIfNoCode = true
 	// No per-account row for ba_1, so the only_va gate drops it.
-	multiVAOnly := Webhook{ID: "wh_m", BankMode: "multi", EventType: "All", Active: true,
-		BankAccountXIDs: []string{"ba_other"}, OnlyVA: true}
+	multiVAOnly := Webhook{
+		ID: "wh_m", BankMode: "multi", EventType: "All", Active: true,
+		BankAccountXIDs: []string{"ba_other"}, OnlyVA: true,
+	}
 
 	cases := []struct {
 		name    string
@@ -259,7 +273,7 @@ func TestAssertDeliverable(t *testing.T) {
 		{"a VA-only webhook is the wrong target for a plain transfer", []Webhook{vaOnly}, eventPaymentIn, "virtual-account transfers only"},
 		{"receive_primary off on a single-bank webhook", []Webhook{noPrimary}, eventPaymentIn, "skip transfers to the account number itself"},
 		{"an incoming-only webhook and an outgoing event", []Webhook{inOnly}, eventPaymentOut, "incoming transfers only"},
-		{"skip_if_no_code and an event with no code", []Webhook{noCode}, eventPaymentIn, "without a payment code"},
+		{"skip_if_no_code and an event with no code", []Webhook{noCode}, eventPaymentIn, "without a pay code"},
 		{"a multi webhook off its list whose only_va gate drops the event", []Webhook{multiVAOnly}, eventPaymentIn, "virtual-account transfers only"},
 	}
 	for _, tc := range cases {
@@ -299,16 +313,31 @@ func TestDescribeCoverage_NamesTheEventKindsDelivered(t *testing.T) {
 		hooks    []Webhook
 		contains string
 	}{
-		{"every kind on a named account reads as plain coverage",
-			[]Webhook{hookFor("ba_1")}, "Delivering for: ba_1"},
-		{"a virtual-account-only webhook names the VA credits it does deliver",
-			[]Webhook{vaOnly}, "ba_1 — delivering virtual-account transfers only."},
-		{"va_mode none names the transfers it does deliver",
-			[]Webhook{primaryOnly}, "ba_1 — delivering payment_in, payment_out only."},
-		{"an incoming-only company webhook names the kinds it carries",
-			[]Webhook{incomingEverywhere}, "Delivering payment_in, virtual-account transfers for every bank account"},
-		{"a webhook elsewhere still leaves its own account uncovered",
-			[]Webhook{hookFor("ba_9")}, "Any other bank account of this company produces no events."},
+		{
+			"every kind on a named account reads as plain coverage",
+			[]Webhook{hookFor("ba_1")},
+			"Delivering for: ba_1",
+		},
+		{
+			"a virtual-account-only webhook names the VA credits it does deliver",
+			[]Webhook{vaOnly},
+			"ba_1 — delivering virtual-account transfers only.",
+		},
+		{
+			"va_mode none names the transfers it does deliver",
+			[]Webhook{primaryOnly},
+			"ba_1 — delivering payment_in, payment_out only.",
+		},
+		{
+			"an incoming-only company webhook names the kinds it carries",
+			[]Webhook{incomingEverywhere},
+			"Delivering payment_in, virtual-account transfers for every bank account",
+		},
+		{
+			"a webhook elsewhere still leaves its own account uncovered",
+			[]Webhook{hookFor("ba_9")},
+			"Any other bank account of this company produces no events.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

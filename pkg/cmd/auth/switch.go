@@ -12,13 +12,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewCmdSwitch builds "sepay auth switch [profile]", prompting when no argument is given.
+// NewCmdSwitch builds "sepay auth switch <profile>", prompting when no argument is given.
 func NewCmdSwitch(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:               "switch [profile]",
+		Use:               "switch <profile>",
 		Aliases:           []string{"sw"},
 		Short:             "Switch the active profile",
-		Long:              "Change which stored profile subsequent commands use by default.\n\nWith no argument on an interactive terminal, pick from the stored profiles.",
+		Long:              "Change which stored profile later commands use by default.\n\n<profile> is a name \"sepay auth status\" lists. Prompted for on a terminal; required otherwise.",
+		Example:           `  sepay auth switch staging`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: cmdutil.CompleteFirstArg(cmdutil.CompleteProfiles(f)),
 		RunE: func(_ *cobra.Command, args []string) error {

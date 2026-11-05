@@ -40,7 +40,13 @@ func NewCmdTransaction(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "transaction <command>",
 		Aliases: []string{"tx", "txn"},
-		Short:   "List and inspect transactions",
+		Short:   "Transactions on your bank accounts",
+		Long: `A transaction is one movement of money, in or out, that SePay observed on one of
+your bank accounts. It is read-only: SePay records what the bank reported.
+
+"transaction list" filters by bank account, VA, direction, amount and date;
+"transaction get" shows one by xid. To hear about new ones as they arrive, use a
+webhook (sepay webhook).`,
 	}
 	cmd.AddCommand(newListCmd(f), newGetCmd(f))
 	return cmd
@@ -51,15 +57,26 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List transactions",
-		Args:    cobra.NoArgs,
+		Long: `List transactions on your bank accounts, a page at a time. Filter by bank
+account, VA, bank, direction, amount, date or content, and sort by date or amount.
+--since-id returns only transactions after a known one, for polling; --fields
+trims the columns.
+
+The ID column is the <transaction-xid> "transaction get" takes.`,
+		Example: `  # money in on one account this month
+  sepay transaction list --bank-account <bank-account-xid> --transfer-type in --from 2026-07-01
+
+  # poll for anything newer than the last transaction you saw
+  sepay transaction list --since-id <transaction-xid> --json`,
+		Args: cobra.NoArgs,
 	}
 	collect := cmdutil.BindListFlags(cmd.Flags(), map[string]string{
 		"q":                     "Search reference number, content, or code",
 		"bank-account-id":       "Filter by bank account xid",
 		"va-id":                 "Filter by VA xid",
 		"bank-brand-name":       "Filter by bank (e.g. ACB, BIDV)",
-		"transaction-date-from": "Start date (inclusive)",
-		"transaction-date-to":   "End date (inclusive)",
+		"transaction-date-from": "Start date, inclusive (YYYY-MM-DD)",
+		"transaction-date-to":   "End date, inclusive (YYYY-MM-DD)",
 		"amount-in-min":         "Minimum money-in amount",
 		"amount-in-max":         "Maximum money-in amount",
 		"amount-out-min":        "Minimum money-out amount",
@@ -74,6 +91,13 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 		"amount-out-sort":       "Sort by money-out: asc|desc",
 		"fields":                "Comma-separated fields to return",
 	})
+	fl := cmd.Flags()
+	cmdutil.RenameFlag(fl, "search", "q", "Search reference number, content, or code")
+	cmdutil.RenameFlag(fl, "bank-account", "bank-account-id", "Filter by bank account xid")
+	cmdutil.RenameFlag(fl, "va-xid", "va-id", "Filter by virtual account xid")
+	cmdutil.RenameFlag(fl, "bank", "bank-brand-name", "Filter by bank (e.g. ACB, BIDV)")
+	cmdutil.RenameFlag(fl, "from", "transaction-date-from", "Start date, inclusive (YYYY-MM-DD)")
+	cmdutil.RenameFlag(fl, "to", "transaction-date-to", "End date, inclusive (YYYY-MM-DD)")
 	// The API ignores a malformed filter instead of rejecting it.
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		sort := []string{"asc", "desc"}
@@ -89,8 +113,19 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 		if err := cmdutil.ValidateAmounts(cmd, "amount-in-min", "amount-in-max", "amount-out-min", "amount-out-max"); err != nil {
 			return err
 		}
-		if err := cmdutil.ValidateDates(cmd, "transaction-date-from", "transaction-date-to"); err != nil {
+		if err := cmdutil.ValidateDates(cmd, "from", "to", "transaction-date-from", "transaction-date-to"); err != nil {
 			return err
+		}
+		if err := cmdutil.ValidateDateOrder(cmd, "transaction-date-from", "transaction-date-to"); err != nil {
+			return err
+		}
+		if err := cmdutil.IncludeEndDay(cmd, "to", "transaction-date-to"); err != nil {
+			return err
+		}
+		for _, pair := range [][2]string{{"amount-in-min", "amount-in-max"}, {"amount-out-min", "amount-out-max"}} {
+			if err := cmdutil.ValidateAmountOrder(cmd, pair[0], pair[1]); err != nil {
+				return err
+			}
 		}
 		if err := validateFields(cmd); err != nil {
 			return err
@@ -131,9 +166,14 @@ func validateFields(cmd *cobra.Command) error {
 
 func newGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <xid>",
+		Use:   "get <transaction-xid>",
 		Short: "Show a transaction",
-		Args:  cobra.ExactArgs(1),
+		Long: `Show one transaction in full.
+
+<transaction-xid> is the ID column of "sepay transaction list". It is required;
+there is no prompt.`,
+		Example: `  sepay transaction get <transaction-xid> --json`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// An empty xid routes to the list endpoint.
 			if args[0] == "" {
@@ -145,7 +185,6 @@ func newGetCmd(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runList(ctx context.Context, f *cmdutil.Factory, query url.Values) error {
-
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return err

@@ -2,13 +2,16 @@
 # Install the SePay CLI on macOS or Linux from GitHub Releases.
 #
 #   curl -fsSL https://get.sepay.vn/sepay-cli-install.sh | sh
+#   curl -fsSL https://get.sepay.vn/sepay-cli-install.sh | sh -s -- --version 0.2.0 --dir /usr/local/bin
 #
-# Environment:
-#   SEPAY_VERSION      version to install, e.g. 0.2.0 (default: the latest release)
-#   SEPAY_INSTALL_DIR  directory for the binary (default: $HOME/.local/bin)
+# Options (each overrides its environment variable):
+#   --version V  SEPAY_VERSION      version to install, e.g. 0.2.0 (default: the latest release)
+#   --dir D      SEPAY_INSTALL_DIR  directory for the binary (default: $HOME/.local/bin)
+#                SEPAY_REQUIRE_SIGNATURE=1  refuse to install without cosign
 #
 # The archive must match its SHA-256 in checksums.txt. When cosign is on PATH, checksums.txt
 # must also carry the signature of this repository's release workflow. Sends no telemetry.
+# Behind a proxy, set https_proxy: curl and wget both read it.
 #
 # Everything runs inside main, called on the last line, so a download cut short runs nothing.
 set -eu
@@ -50,8 +53,51 @@ is_version() {
 	esac
 }
 
+usage() {
+	say "usage: sepay-cli-install.sh [--version V] [--dir D]"
+	exit "$1"
+}
+
 main() {
+	version=${SEPAY_VERSION:-}
+	dir=${SEPAY_INSTALL_DIR:-}
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--version)
+			[ $# -ge 2 ] || usage 2
+			version=$2
+			shift 2
+			;;
+		--version=*)
+			version=${1#*=}
+			shift
+			;;
+		--dir)
+			[ $# -ge 2 ] || usage 2
+			dir=$2
+			shift 2
+			;;
+		--dir=*)
+			dir=${1#*=}
+			shift
+			;;
+		-h | --help) usage 0 ;;
+		*)
+			say "unknown option: $1"
+			usage 2
+			;;
+		esac
+	done
+	dir=${dir:-$HOME/.local/bin}
+
 	has curl || has wget || die "need curl or wget"
+	if ! has curl && ! wget --help 2>&1 | grep -q -- --https-only; then
+		say "warning: BusyBox wget cannot refuse a redirect to plain http and may not check TLS certificates; install curl, or cosign so the signature is checked"
+	fi
+	case "${SEPAY_REQUIRE_SIGNATURE:-0}" in
+	"" | 0) ;;
+	*) has cosign || die "SEPAY_REQUIRE_SIGNATURE is set but cosign is not on PATH; install cosign (https://docs.sigstore.dev) or unset it" ;;
+	esac
 	has sha256sum || has shasum || die "need sha256sum or shasum to verify the download"
 	for tool in tar mktemp awk; do
 		has "$tool" || die "need $tool"
@@ -60,8 +106,7 @@ main() {
 	case "$(uname -s)" in
 	Linux) os=linux ;;
 	Darwin) os=darwin ;;
-	# Windows goes to npm until the Scoop bucket carries a manifest (PUBLISH_TAPS in release.yml).
-	*) die "unsupported OS $(uname -s); on Windows run: npm install -g sepay-cli" ;;
+	*) die "unsupported OS $(uname -s); on Windows use the Scoop bucket https://github.com/sepayvn/scoop-sepay-cli or run: npm install -g sepay-cli" ;;
 	esac
 	case "$(uname -m)" in
 	x86_64 | amd64) arch=amd64 ;;
@@ -73,14 +118,16 @@ main() {
 	trap 'rm -rf "$tmp"' EXIT
 	trap 'exit 130' INT TERM
 
-	if [ -n "${SEPAY_VERSION:-}" ]; then
-		version=${SEPAY_VERSION#v}
-		is_version "$version" || die "SEPAY_VERSION must look like 0.2.0 or 0.2.0-rc.1"
+	if [ -n "$version" ]; then
+		version=${version#v}
+		is_version "$version" || die "the version must look like 0.2.0 or 0.2.0-rc.1"
 	else
-		download "https://api.github.com/repos/$REPO/releases/latest" "$tmp/latest.json" ||
-			die "could not ask GitHub for the latest release (no network, or over GitHub's 60 requests an hour per IP); set SEPAY_VERSION, e.g. SEPAY_VERSION=0.1.0"
-		version=$(sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' "$tmp/latest.json" | head -n 1)
-		is_version "$version" || die "could not read the latest release of $REPO; set SEPAY_VERSION, e.g. SEPAY_VERSION=0.1.0"
+		# The latest release's own checksums.txt names its archives, so no API call (and no API rate
+		# limit) is needed. It is only read for the version; the one verified below comes from that tag.
+		download "https://github.com/$REPO/releases/latest/download/checksums.txt" "$tmp/latest.txt" ||
+			die "could not find the latest release of $REPO; pass --version, e.g. --version 0.1.0"
+		version=$(awk '{ print $2 }' "$tmp/latest.txt" | sed -n "s/^sepay_\(.*\)_${os}_${arch}\.tar\.gz\$/\1/p" | head -n 1)
+		is_version "$version" || die "could not read the latest release of $REPO; pass --version, e.g. --version 0.1.0"
 	fi
 
 	base="https://github.com/$REPO/releases/download/v$version"
@@ -121,13 +168,15 @@ main() {
 	tar -xzf "$tmp/$archive" -C "$tmp" sepay || die "could not unpack $archive"
 	[ -f "$tmp/sepay" ] || die "$archive holds no sepay binary"
 	chmod 0755 "$tmp/sepay"
+	# The first line is the version; the second is its release-notes URL.
 	banner=$(SEPAY_NO_UPDATE_NOTIFIER=1 "$tmp/sepay" version) || die "the downloaded sepay does not run on this machine"
+	banner=${banner%%
+*}
 
-	dir=${SEPAY_INSTALL_DIR:-$HOME/.local/bin}
 	existing=$(command -v sepay 2>/dev/null || true)
-	mkdir -p "$dir" 2>/dev/null || die "cannot create $dir; set SEPAY_INSTALL_DIR to a directory you can write to"
+	mkdir -p "$dir" 2>/dev/null || die "cannot create $dir; pass --dir with a directory you can write to"
 	# Copy next to the target, then rename: a running sepay keeps working and no half-written file is left.
-	cp "$tmp/sepay" "$dir/.sepay.new.$$" 2>/dev/null || die "cannot write to $dir; set SEPAY_INSTALL_DIR to a directory you can write to"
+	cp "$tmp/sepay" "$dir/.sepay.new.$$" 2>/dev/null || die "cannot write to $dir; pass --dir with a directory you can write to"
 	mv -f "$dir/.sepay.new.$$" "$dir/sepay"
 
 	say "installed $banner to $dir/sepay"

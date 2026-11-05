@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Annotation keys read by help, `sepay --map` and `sepay docs capabilities`.
+// Annotation keys read by help and `sepay --map`.
 const (
 	AnnImplemented = "sepay:implemented" // "no" when the command has no backend yet
 	AnnEnvs        = "sepay:envs"        // "sandbox" when production is refused, else unset (both)
@@ -20,6 +20,14 @@ const (
 	AnnRequired = "sepay:required"
 	// AnnValueFlag names a flag taking the positional's value, for values that look like switch words.
 	AnnValueFlag = "sepay:value-flag"
+	// AnnHost names the hosts a command under a product noun calls when they are not its noun's.
+	AnnHost = "sepay:host" // HostAPI | HostPGCheckout, or unset
+)
+
+// AnnHost values.
+const (
+	HostAPI        = "api"         // the SePay API host only, e.g. the ipn commands
+	HostPGCheckout = "pg-checkout" // the PG API host and the hosted-checkout host
 )
 
 // MarkRequired marks flags required when the command cannot prompt, in help and `--map=json`.

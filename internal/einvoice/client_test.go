@@ -86,7 +86,7 @@ func TestClient_ListIntoEmptyIsNonNil(t *testing.T) {
 	items, _, err := ListInto[map[string]any](resp)
 	require.NoError(t, err)
 	assert.NotNil(t, items)
-	assert.Len(t, items, 0)
+	assert.Empty(t, items)
 }
 
 func TestClient_SendsBearerAuth(t *testing.T) {
@@ -190,7 +190,7 @@ func TestClient_DoesNotRetryPostOn429(t *testing.T) {
 
 func TestClient_MutationIsNotReplayedOn401(t *testing.T) {
 	var calls int32
-	c, creds := clientTo(t, func(w http.ResponseWriter, r *http.Request) {
+	c, creds := clientTo(t, func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"success":false,"error":{"code":"UNAUTHORIZED"}}`))

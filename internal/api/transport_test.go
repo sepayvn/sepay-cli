@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -101,9 +102,10 @@ func TestPut_IfMatchIsNotResentWhenTheOutcomeIsUnknown(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var attempts int
+			// Atomic: the client sees the cut connection before the aborted handler is done with it.
+			var attempts atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				attempts++
+				attempts.Add(1)
 				if tc.status == 0 {
 					panic(http.ErrAbortHandler)
 				}
@@ -117,7 +119,7 @@ func TestPut_IfMatchIsNotResentWhenTheOutcomeIsUnknown(t *testing.T) {
 			c.MaxRetries = 1
 			_, err := c.Put(context.Background(), "/company/paycode", WriteOptions{Body: map[string]string{"a": "b"}, Header: tc.header, IdempotencyKey: tc.key})
 			require.Error(t, err)
-			assert.Equal(t, tc.attempts, attempts)
+			assert.Equal(t, int32(tc.attempts), attempts.Load())
 		})
 	}
 }

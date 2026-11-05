@@ -86,7 +86,7 @@ func TestManager_SwitchToInsecureClearsKeychain(t *testing.T) {
 	require.NoError(t, err)
 
 	_, kerr := keyring.Get(keyringService, keyFor("work", "my.sepay.vn"))
-	assert.ErrorIs(t, kerr, keyring.ErrNotFound, "keychain copy must be removed when switching to insecure storage")
+	require.ErrorIs(t, kerr, keyring.ErrNotFound, "keychain copy must be removed when switching to insecure storage")
 
 	got, err := m.Get("work")
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestManager_Delete(t *testing.T) {
 
 	require.NoError(t, m.Delete("work"))
 	_, err = m.Get("work")
-	assert.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, ErrNotFound)
 	assert.Empty(t, m.Hosts().Active)
 }
 

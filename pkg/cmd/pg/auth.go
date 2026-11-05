@@ -40,7 +40,6 @@ func newAuthCmd(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runAuth(ctx context.Context, f *cmdutil.Factory, refresh, insecure bool) error {
-
 	mgr, err := f.ProductManager()
 	if err != nil {
 		return err

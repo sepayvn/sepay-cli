@@ -11,7 +11,7 @@ import (
 func TestFlexInt_RejectsNonFiniteAndOutOfRange(t *testing.T) {
 	for _, bad := range []string{`"Inf"`, `"-Inf"`, `"NaN"`, `"1e30"`, `"-1e30"`} {
 		var n FlexInt
-		assert.Error(t, json.Unmarshal([]byte(bad), &n), "%s must be rejected", bad)
+		require.Error(t, json.Unmarshal([]byte(bad), &n), "%s must be rejected", bad)
 	}
 	for in, want := range map[string]int{`"100000.00"`: 100000, `100000`: 100000, `"0"`: 0} {
 		var n FlexInt
@@ -25,8 +25,15 @@ func TestFlexInt_AcceptsTheBooleanSpelling(t *testing.T) {
 		in   string
 		want int
 	}{
-		{`1`, 1}, {`"1"`, 1}, {`true`, 1}, {`"true"`, 1},
-		{`0`, 0}, {`"0"`, 0}, {`false`, 0}, {`"false"`, 0}, {`null`, 0},
+		{`1`, 1},
+		{`"1"`, 1},
+		{`true`, 1},
+		{`"true"`, 1},
+		{`0`, 0},
+		{`"0"`, 0},
+		{`false`, 0},
+		{`"false"`, 0},
+		{`null`, 0},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
 			var n FlexInt
@@ -41,9 +48,16 @@ func TestFlexBool_AcceptsEveryWireForm(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{`true`, true}, {`"true"`, true}, {`1`, true}, {`"1"`, true},
-		{`false`, false}, {`"false"`, false}, {`0`, false}, {`"0"`, false},
-		{`null`, false}, {`""`, false},
+		{`true`, true},
+		{`"true"`, true},
+		{`1`, true},
+		{`"1"`, true},
+		{`false`, false},
+		{`"false"`, false},
+		{`0`, false},
+		{`"0"`, false},
+		{`null`, false},
+		{`""`, false},
 	} {
 		t.Run(tc.in, func(t *testing.T) {
 			var b FlexBool
@@ -75,7 +89,7 @@ func TestFlexInt_RejectsTheValueThatRoundsToTwoToThe63(t *testing.T) {
 		`"1e19"`,
 	} {
 		var n FlexInt
-		assert.Error(t, json.Unmarshal([]byte(bad), &n), "%s must be rejected, not wrapped", bad)
+		require.Error(t, json.Unmarshal([]byte(bad), &n), "%s must be rejected, not wrapped", bad)
 		assert.NotEqual(t, -9223372036854775808, int(n), "%s must never wrap negative", bad)
 	}
 }
@@ -95,7 +109,7 @@ func TestFlexInt_RejectsTheValueThatRoundsToMinInt64(t *testing.T) {
 func TestFlexNum_RejectsNonFinite(t *testing.T) {
 	for _, bad := range []string{`"NaN"`, `"Inf"`, `"-Inf"`, `"+Inf"`, `"Infinity"`} {
 		var n FlexNum
-		assert.Error(t, json.Unmarshal([]byte(bad), &n), "%s must be rejected", bad)
+		require.Error(t, json.Unmarshal([]byte(bad), &n), "%s must be rejected", bad)
 	}
 	for in, want := range map[string]float64{`"2.50"`: 2.5, `2.5`: 2.5, `"100000.00"`: 100000, `null`: 0} {
 		var n FlexNum

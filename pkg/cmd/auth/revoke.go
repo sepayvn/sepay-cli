@@ -59,7 +59,6 @@ again.`,
 }
 
 func runRevoke(ctx context.Context, f *cmdutil.Factory, opts *revokeOptions, profile string) error {
-
 	if opts.all && opts.token != "" {
 		return &cmdutil.FlagError{Err: errors.New("--all and --token are mutually exclusive")}
 	}
@@ -79,7 +78,7 @@ func runRevoke(ctx context.Context, f *cmdutil.Factory, opts *revokeOptions, pro
 			}
 		}
 		if _, err := client.RevokeTokenID(ctx, token, opts.token); err != nil {
-			return authAPIError(f, "revoke session", err)
+			return authAPIError("revoke session", err)
 		}
 		if !current {
 			f.Printf("%s Revoked session %s\n", f.SuccessIcon(), opts.token)
@@ -101,7 +100,7 @@ func runRevoke(ctx context.Context, f *cmdutil.Factory, opts *revokeOptions, pro
 		}
 		n, err := f.NewOAuthClient(host).RevokeAllTokens(ctx, token)
 		if err != nil {
-			return authAPIError(f, "revoke sessions", err)
+			return authAPIError("revoke sessions", err)
 		}
 		forgetRevoked(f, sameAccount(f, revokeTarget(f, profile))...)
 		f.Printf("%s Revoked %d session(s); this token is now invalid, run: sepay login\n", f.SuccessIcon(), n)
@@ -131,7 +130,7 @@ func runRevoke(ctx context.Context, f *cmdutil.Factory, opts *revokeOptions, pro
 				continue
 			}
 			if rerr := revokeCredential(ctx, f, p.Host, cred); rerr != nil {
-				return authAPIError(f, "revoke token", rerr)
+				return authAPIError("revoke token", rerr)
 			}
 			forgetRevoked(f, name)
 			f.Printf("%s Revoked token for profile %s; run: sepay login to sign in again\n", f.SuccessIcon(), name)

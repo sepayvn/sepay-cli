@@ -219,7 +219,7 @@ func TestClient_DoesNotRetryPostOn429(t *testing.T) {
 
 func TestClient_MutationIsNotReplayedOn401(t *testing.T) {
 	var calls int32
-	c, creds := clientTo(t, func(w http.ResponseWriter, r *http.Request) {
+	c, creds := clientTo(t, func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&calls, 1)
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"code":401,"message":"Unauthenticated"}`))

@@ -9,9 +9,10 @@ import (
 	"testing"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
+	"github.com/sepayvn/sepay-cli/pkg/cmdutil/prompttest"
 	"github.com/sepayvn/sepay-cli/pkg/iostreams"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func apiTestFactory(t *testing.T, h http.HandlerFunc) (*cmdutil.Factory, *bytes.
 
 const ipnConfigured = `{"status":"success","data":{"configured":true,"ipn_url":"https://example.com/bh-ipn","api_key":"****9999"}}`
 
-func TestIpnGet_ShowsConfig(t *testing.T) {
+func TestIPNGet_ShowsConfig(t *testing.T) {
 	f, out, _ := apiTestFactory(t, okJSON(ipnConfigured))
 	require.NoError(t, run(f, "ipn", "get"))
 	s := out.String()
@@ -43,13 +44,13 @@ func TestIpnGet_ShowsConfig(t *testing.T) {
 	assert.Contains(t, s, "****9999") // server-masked hint, safe to show
 }
 
-func TestIpnGet_NotConfigured(t *testing.T) {
+func TestIPNGet_NotConfigured(t *testing.T) {
 	f, out, _ := apiTestFactory(t, okJSON(`{"status":"success","data":{"configured":false,"ipn_url":null,"api_key":null}}`))
 	require.NoError(t, run(f, "ipn", "get"))
 	assert.Contains(t, out.String(), "No IPN configured")
 }
 
-func TestIpnSet_OmitsApiKeyWhenFlagAbsent(t *testing.T) {
+func TestIPNSet_OmitsApiKeyWhenFlagAbsent(t *testing.T) {
 	var body []byte
 	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -70,7 +71,7 @@ func TestIpnSet_OmitsApiKeyWhenFlagAbsent(t *testing.T) {
 	assert.False(t, hasKey, "api_key must not be sent when --api-key was not passed")
 }
 
-func TestIpnSet_SendsApiKeyAndNeverPrintsIt(t *testing.T) {
+func TestIPNSet_SendsApiKeyAndNeverPrintsIt(t *testing.T) {
 	var body []byte
 	f, out, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -88,7 +89,7 @@ func TestIpnSet_SendsApiKeyAndNeverPrintsIt(t *testing.T) {
 	assert.Contains(t, out.String(), "3 of 3 updated")
 }
 
-func TestIpnSet_WarnsOnPartialFanOut(t *testing.T) {
+func TestIPNSet_WarnsOnPartialFanOut(t *testing.T) {
 	f, out, errOut := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(ipnConfigured))
@@ -103,7 +104,7 @@ func TestIpnSet_WarnsOnPartialFanOut(t *testing.T) {
 	assert.Contains(t, errOut.String(), "3 linked account(s) still deliver to the previous endpoint")
 }
 
-func TestIpnSet_KeepsStoredKeyWhenTheReadFails(t *testing.T) {
+func TestIPNSet_KeepsStoredKeyWhenTheReadFails(t *testing.T) {
 	var body []byte
 	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -124,7 +125,7 @@ func TestIpnSet_KeepsStoredKeyWhenTheReadFails(t *testing.T) {
 	assert.False(t, hasKey)
 }
 
-func TestIpnSet_EmptyApiKeyTurnsAuthOff(t *testing.T) {
+func TestIPNSet_EmptyApiKeyTurnsAuthOff(t *testing.T) {
 	var body []byte
 	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -139,7 +140,7 @@ func TestIpnSet_EmptyApiKeyTurnsAuthOff(t *testing.T) {
 	assert.Contains(t, string(body), `"api_key":""`)
 }
 
-func TestIpnListen_RejectsUnknownEvent(t *testing.T) {
+func TestIPNListen_RejectsUnknownEvent(t *testing.T) {
 	f, _, _ := apiTestFactory(t, okJSON(ipnConfigured))
 	err := run(f, "ipn", "listen", "--forward", "localhost:3000", "--events", "payment_in")
 	require.Error(t, err)
@@ -147,7 +148,7 @@ func TestIpnListen_RejectsUnknownEvent(t *testing.T) {
 	assert.Contains(t, err.Error(), "transaction_credit")
 }
 
-func TestIpn_ProductionRejected(t *testing.T) {
+func TestIPN_ProductionRejected(t *testing.T) {
 	f, _, _ := apiTestFactory(t, okJSON(ipnConfigured))
 	f.Global.Env = "production"
 	err := run(f, "ipn", "get")
@@ -167,11 +168,11 @@ func TestBankAccountFilter_ReadsPayload(t *testing.T) {
 
 func TestBankAccountTag_EmptyWithoutXid(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
-	assert.Equal(t, "", bankAccountTag(ios, listen.Frame{Payload: json.RawMessage(`{}`)}))
+	assert.Empty(t, bankAccountTag(ios, listen.Frame{Payload: json.RawMessage(`{}`)}))
 	assert.Contains(t, bankAccountTag(ios, listen.Frame{Payload: json.RawMessage(`{"bank_account_xid":"ba-1"}`)}), "ba=ba-1")
 }
 
-func TestIpnListenSource_RetryPolicy(t *testing.T) {
+func TestIPNListenSource_RetryPolicy(t *testing.T) {
 	src := ipnListenSource("")
 
 	require.Nil(t, src.RetryNon2xx,
@@ -193,7 +194,7 @@ func TestBankAccountTag_NamesLookupKeys(t *testing.T) {
 	assert.Contains(t, got, "ba=ba-1", "the xid must not be trimmed at its dash")
 }
 
-func TestIpnSet_EmptyAPIKeyStillTurnsAuthOff(t *testing.T) {
+func TestIPNSet_EmptyAPIKeyStillTurnsAuthOff(t *testing.T) {
 	var body []byte
 	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -209,7 +210,7 @@ func TestIpnSet_EmptyAPIKeyStillTurnsAuthOff(t *testing.T) {
 	assert.Contains(t, string(body), `"api_key":""`)
 }
 
-func TestIpnSet_APIKeyFromStdinReachesTheBody(t *testing.T) {
+func TestIPNSet_APIKeyFromStdinReachesTheBody(t *testing.T) {
 	var body []byte
 	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -230,7 +231,7 @@ func TestIpnSet_APIKeyFromStdinReachesTheBody(t *testing.T) {
 	assert.NotContains(t, string(body), `"api_key":"-"`)
 }
 
-func TestIpnSet_MasksAKeyEchoedRawByThePost(t *testing.T) {
+func TestIPNSet_MasksAKeyEchoedRawByThePost(t *testing.T) {
 	f, out, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(ipnConfigured))
@@ -244,4 +245,28 @@ func TestIpnSet_MasksAKeyEchoedRawByThePost(t *testing.T) {
 	require.NoError(t, run(f, "ipn", "set", "https://example.com/bh-ipn", "--api-key", "SUPERSECRETRAWKEYcdef"))
 	assert.NotContains(t, out.String(), "SUPERSECRETRAWKEYcdef")
 	assert.Contains(t, out.String(), `"api_key": "****cdef"`)
+}
+
+// On a terminal an unread config offers no auth choice: "keep" could not be offered, and turning
+// auth off by mistake is what the choice would risk.
+func TestIPNSet_TerminalAsksNoKeyWhenTheReadFails(t *testing.T) {
+	var body []byte
+	f, _, _ := apiTestFactory(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"status":"error","message":"upstream"}`))
+			return
+		}
+		body, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(ipnConfigured))
+	})
+	f.Global.Yes = true
+	prompttest.Use(t, f)
+	require.NoError(t, run(f, "ipn", "set", "https://example.com/bh-ipn"))
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(body, &sent))
+	assert.NotContains(t, sent, "api_key")
+	assert.NotContains(t, sent, "secret_key")
+	assert.Contains(t, f.IOStreams.ErrOut.(*bytes.Buffer).String(), "could not read the current config")
 }

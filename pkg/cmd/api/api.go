@@ -52,7 +52,7 @@ otherwise as a string; use --input for a full raw body.`,
 	})
 }
 
-func runAPI(cmd *cobra.Command, f *cmdutil.Factory, path string) error {
+func runAPI(cmd *cobra.Command, f *cmdutil.Factory, endpoint string) error {
 	fl := cmd.Flags()
 	methodFlag, _ := fl.GetString("method")
 	method := strings.ToUpper(methodFlag)
@@ -60,9 +60,9 @@ func runAPI(cmd *cobra.Command, f *cmdutil.Factory, path string) error {
 	headers, _ := fl.GetStringArray("header")
 	input, _ := fl.GetString("input")
 
-	arg := path
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
+	arg := endpoint
+	if !strings.HasPrefix(endpoint, "/") {
+		endpoint = "/" + endpoint
 	}
 	isRead := method == http.MethodGet || method == http.MethodHead
 
@@ -94,7 +94,7 @@ func runAPI(cmd *cobra.Command, f *cmdutil.Factory, path string) error {
 	}
 
 	if !isRead {
-		if err := f.ConfirmMutation(fmt.Sprintf("api %s %s", method, path), method == http.MethodDelete); err != nil {
+		if err := f.ConfirmMutation(fmt.Sprintf("api %s %s", method, endpoint), method == http.MethodDelete); err != nil {
 			return err
 		}
 	}
@@ -107,13 +107,13 @@ func runAPI(cmd *cobra.Command, f *cmdutil.Factory, path string) error {
 	if err := rejectAbsoluteURL(client.BaseURL(), arg); err != nil {
 		return err
 	}
-	if err := rejectDotSegments(client.BaseURL(), path); err != nil {
+	if err := rejectDotSegments(client.BaseURL(), endpoint); err != nil {
 		return err
 	}
-	if err := rejectDuplicateBasePath(client.BaseURL(), path); err != nil {
+	if err := rejectDuplicateBasePath(client.BaseURL(), endpoint); err != nil {
 		return err
 	}
-	env, err := client.Request(cmd.Context(), method, path, query, opts)
+	env, err := client.Request(cmd.Context(), method, endpoint, query, opts)
 	if err != nil {
 		return err
 	}
@@ -217,12 +217,12 @@ func cleanPath(baseURL, p string) string {
 }
 
 // rejectDuplicateBasePath refuses a path repeating the base's prefix (`sepay api /v2/...`), which can only 404.
-func rejectDuplicateBasePath(baseURL, path string) error {
+func rejectDuplicateBasePath(baseURL, p string) error {
 	for _, prefix := range basePathCandidates(baseURL) {
-		if path != prefix && !strings.HasPrefix(path, prefix+"/") {
+		if p != prefix && !strings.HasPrefix(p, prefix+"/") {
 			continue
 		}
-		suggestion := strings.TrimPrefix(path, prefix)
+		suggestion := strings.TrimPrefix(p, prefix)
 		if suggestion == "" {
 			suggestion = "/transactions" // path was the prefix alone; nothing to keep
 		}

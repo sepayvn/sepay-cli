@@ -46,7 +46,22 @@ func NewCmdQuota(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
 		Use:   "quota",
 		Short: "Show your plan quota and usage",
-		Args:  cobra.NoArgs,
+		Long: `Show how much of each quota your company has used. On production that is the
+plan's transaction quota for the current billing cycle (company admins only); on
+sandbox, the sandbox caps on transactions, bank accounts, webhooks and API keys.
+
+USED is counted over PERIOD: cycle (the plan's billing cycle, printed below the
+table), daily or total. LIMIT and REMAINING are "-" when the server sends no
+figure. ENFORCEMENT says what happens at the limit:
+
+  capped     new bank transactions are rejected once USED reaches LIMIT
+  exempt     going over the limit does not stop transactions
+  unlimited  the plan sets no limit
+  unknown    the plan has no billing window, so usage cannot be measured
+  blocked    sandbox: a create past the limit fails with quota_exceeded`,
+		Example: `  sepay quota
+  sepay quota --env production --json`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runQuota(cmd.Context(), f)
 		},
@@ -54,7 +69,6 @@ func NewCmdQuota(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runQuota(ctx context.Context, f *cmdutil.Factory) error {
-
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return err

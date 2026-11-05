@@ -5,18 +5,71 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sepayvn/sepay-cli/internal/forward"
+	"github.com/sepayvn/sepay-cli/internal/listen"
 	"github.com/sepayvn/sepay-cli/internal/sse"
-	bankaccount "github.com/sepayvn/sepay-cli/pkg/cmd/bank-account"
+	"github.com/sepayvn/sepay-cli/pkg/cmd/bankaccount"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/sandbox"
 	vapkg "github.com/sepayvn/sepay-cli/pkg/cmd/va"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
-	"github.com/sepayvn/sepay-cli/pkg/listen"
 
 	"github.com/spf13/cobra"
 )
+
+func newTestCmd(f *cmdutil.Factory) *cobra.Command {
+	var (
+		forwardAddr, event, bankAccount, vaNumber, webhookXID string
+		forwardCreds                                          bool
+		amount                                                int64
+		timeout                                               time.Duration
+		expectStatus                                          int
+	)
+	cmd := &cobra.Command{
+		Use:   "test",
+		Short: "Fire an event and assert your handler responds (sandbox only)",
+		Long: `Fire a sandbox event and check that your local handler answers it. The CLI opens
+the same stream as "webhook listen", fires the event, forwards the delivery to
+--forward and checks the status (--expect-status, any 2xx by default). A wrong
+status or no answer within --timeout exits 6.
+
+It needs a webhook that covers the bank account; --webhook picks one when several do.`,
+		Example: `  sepay webhook test --forward localhost:3000 --amount 50000
+  sepay webhook test --forward localhost:3000 --amount 50000 --event payment_out --expect-status 200`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			opts, err := resolveTestOptions(cmd, f, testOptions{
+				forward: forwardAddr, forwardCreds: forwardCreds,
+				event: event, bankAccount: bankAccount,
+				va: vaNumber, amount: amount, timeout: timeout, expectStatus: expectStatus,
+				webhook: webhookXID,
+			})
+			if err != nil {
+				return err
+			}
+			return runTest(cmd.Context(), f, opts)
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&forwardAddr, "forward", "", "Local handler address, e.g. localhost:3000 (required)")
+	fl.BoolVar(&forwardCreds, "forward-credentials", false,
+		"Replay credential headers (Authorization, X-Secret-Key) to a non-loopback handler; they are withheld by default")
+	fl.StringVar(&event, "event", "payment_in", "Event type to fire: "+strings.Join(sandbox.EventTypes(), ", "))
+	fl.StringVar(&bankAccount, "bank-account", "", "Sandbox bank account xid to fire under")
+	fl.Int64Var(&amount, "amount", 0, "Amount in VND")
+	fl.StringVar(&vaNumber, "va", "", "Virtual account number (for va_credit)")
+	fl.StringVar(&webhookXID, "webhook", "", "Judge only this webhook's delivery (see: sepay webhook list)")
+	fl.DurationVar(&timeout, "timeout", 10*time.Second, "How long to wait for the handler")
+	fl.IntVar(&expectStatus, "expect-status", 0, "HTTP status to assert (0 = any 2xx)")
+	cmdutil.MarkRequired(cmd, "forward", "amount")
+	return cmdutil.Annotate(cmd, map[string]string{
+		cmdutil.AnnEnvs: "sandbox",
+		cmdutil.AnnGuidance: "It fabricates a transaction, which has no production meaning; to check a live " +
+			"endpoint, read what SePay delivered to it with `sepay webhook logs --env production`.",
+	})
+}
 
 type testOptions struct {
 	forward      string
@@ -37,25 +90,15 @@ type testResult struct {
 	OK         bool   `json:"ok" yaml:"ok"`
 }
 
-const (
-	simulateAmountMin = 1000
-	simulateAmountMax = 499_000_000
-)
-
-func checkAmount(amount int64) error {
-	if amount == 0 || (amount >= simulateAmountMin && amount <= simulateAmountMax) {
-		return nil
-	}
-	return &cmdutil.FlagError{Err: fmt.Errorf("--amount must be between %d and %d", simulateAmountMin, simulateAmountMax)}
-}
-
 // resolveTestOptions pins sandbox (simulate has no production equivalent) and fills required inputs.
 func resolveTestOptions(cmd *cobra.Command, f *cmdutil.Factory, in testOptions) (testOptions, error) {
 	if err := sandbox.EnsureSandboxEnv(f); err != nil {
 		return testOptions{}, err
 	}
-	if err := checkAmount(in.amount); err != nil {
-		return testOptions{}, err
+	if cmd.Flags().Changed("amount") {
+		if err := sandbox.CheckAmount(in.amount); err != nil {
+			return testOptions{}, err
+		}
 	}
 	// SelectOrFlag passes values through, so validate here to fail as a flag error (exit 2), not a server one.
 	if err := cmdutil.ValidateChoices(cmd, map[string][]string{"event": sandbox.EventTypes()}); err != nil {
@@ -77,9 +120,6 @@ func resolveTestOptions(cmd *cobra.Command, f *cmdutil.Factory, in testOptions) 
 	}
 	amount, err := sandbox.ResolveAmount(f, in.amount, cmd.Flags().Changed("amount"))
 	if err != nil {
-		return testOptions{}, err
-	}
-	if err := checkAmount(amount); err != nil {
 		return testOptions{}, err
 	}
 	va := in.va
@@ -172,7 +212,7 @@ func runTest(ctx context.Context, f *cmdutil.Factory, opts testOptions) error {
 	if err != nil {
 		return err
 	}
-	return forwardOnce(ctx, f, fwd, frame, opts.expectStatus, listen.WithholdCredentialsFor(fwd, opts.forwardCreds))
+	return forwardOnce(ctx, f, fwd, frame, opts)
 }
 
 // matches requires both the direction and the VA: the hub types a VA credit as payment_in.
@@ -228,29 +268,29 @@ func awaitEvent(ctx context.Context, stream *sse.Stream, opts testOptions) (list
 }
 
 // forwardOnce POSTs the event to the handler; a transport failure or unexpected status returns a SilentError (exit 6).
-func forwardOnce(ctx context.Context, f *cmdutil.Factory, fwd *forward.Forwarder, frame listen.Frame, expectStatus int, withholdCreds bool) error {
+func forwardOnce(ctx context.Context, f *cmdutil.Factory, fwd *forward.Forwarder, frame listen.Frame, opts testOptions) error {
 	// The signature covers raw_body, not the re-encoded payload.
-	res, err := fwd.Send(ctx, frame.Body(), listen.OutboundHeaders(frame, withholdCreds))
+	res, err := fwd.Send(ctx, frame.Body(), listen.OutboundHeaders(frame, listen.WithholdCredentialsFor(fwd, opts.forwardCreds)))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
 		_ = f.RenderOutput(testResult{Event: frame.Type, OK: false}, func() error {
-			f.ErrPrintf("handler %s: %v\n", f.IOStreams.Red("did not respond"), err)
+			f.ErrPrintf("handler at %s %s\n", fwd.Target(), f.IOStreams.Red(forward.Failure(err)))
 			return nil
 		})
 		return cmdutil.SilentError{Code: cmdutil.ExitForward}
 	}
 
 	ok := res.OK()
-	if expectStatus != 0 {
-		ok = res.StatusCode == expectStatus
+	if opts.expectStatus != 0 {
+		ok = res.StatusCode == opts.expectStatus
 	}
 	result := testResult{Event: frame.Type, StatusCode: res.StatusCode, LatencyMs: res.Latency.Milliseconds(), OK: ok}
 	if !ok {
 		want := "2xx"
-		if expectStatus != 0 {
-			want = strconv.Itoa(expectStatus)
+		if opts.expectStatus != 0 {
+			want = strconv.Itoa(opts.expectStatus)
 		}
 		_ = f.RenderOutput(result, func() error {
 			f.ErrPrintf("handler returned %s, want %s\n", f.IOStreams.Red(strconv.Itoa(res.StatusCode)), want)
@@ -258,7 +298,7 @@ func forwardOnce(ctx context.Context, f *cmdutil.Factory, fwd *forward.Forwarder
 				f.ErrPrintf("    %s\n", string(res.Body))
 			}
 			// Several webhooks may match; name the one judged.
-			if xid := webhookXID(frame); xid != "" {
+			if xid := webhookXID(frame); xid != "" && opts.webhook == "" {
 				f.ErrPrintf("    judged the delivery for webhook %s; pin it with --webhook <xid>\n", xid)
 			}
 			return nil

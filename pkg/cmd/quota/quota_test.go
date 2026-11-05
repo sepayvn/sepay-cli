@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
@@ -20,7 +21,7 @@ const sandboxQuota = `{"status":"success","data":{"available":true,"quotas":{"tr
 
 const productionQuota = `{"status":"success","data":{"available":true,"cycle":{"begin":"2026-07-01","end":"2026-09-30","billing_cycle":"quarterly"},"quotas":{"transaction":{"used":18432,"limit":30000,"remaining":11568,"period":"cycle","enforcement":"capped"}}}}`
 
-// An uncapped or exempt plan omits limit and remaining.
+// A plan with no allowance omits limit and remaining.
 const productionUncappedQuota = `{"status":"success","data":{"available":true,"cycle":{"begin":"2026-08-01","end":"2026-08-31","billing_cycle":"free"},"quotas":{"transaction":{"used":41,"period":"cycle","enforcement":"unlimited"}}}}`
 
 const noPlanQuota = `{"status":"success","data":{"available":false,"message":"Cong ty chua co goi dich vu nao"}}`
@@ -39,8 +40,8 @@ func testFactory(t *testing.T, h http.HandlerFunc) (*cmdutil.Factory, *bytes.Buf
 	return f, out, errOut
 }
 
-func run(cmd *cobra.Command, args ...string) error {
-	cmd.SetArgs(args)
+func run(cmd *cobra.Command) error {
+	cmd.SetArgs([]string{})
 	return cmd.ExecuteContext(context.Background())
 }
 
@@ -99,6 +100,28 @@ func TestQuota_ProductionUncapped(t *testing.T) {
 	assert.Contains(t, s, "unlimited")
 	assert.NotContains(t, s, " 0 ")
 	assert.NotContains(t, errOut.String(), "overage")
+}
+
+// An exempt plan (a Free plan allowed to exceed its allowance) still sends limit and remaining.
+const productionExemptQuota = `{"status":"success","data":{"available":true,"cycle":{"begin":"2026-11-01","end":"2026-11-30","billing_cycle":"free"},"quotas":{"transaction":{"used":41,"limit":50,"remaining":9,"period":"cycle","enforcement":"exempt"}}}}`
+
+func TestQuota_ProductionExempt(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(productionExemptQuota))
+	require.NoError(t, run(NewCmdQuota(f)))
+
+	fields := strings.Fields(out.String())
+	assert.Equal(t, []string{"transaction", "41", "50", "9", "cycle", "exempt"}, fields[6:12])
+}
+
+func TestQuota_ProductionExemptJSON(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(productionExemptQuota))
+	f.Global.Output = "json"
+	require.NoError(t, run(NewCmdQuota(f)))
+
+	s := out.String()
+	assert.Contains(t, s, `"limit": 50`)
+	assert.Contains(t, s, `"remaining": 9`)
+	assert.Contains(t, s, `"enforcement": "exempt"`)
 }
 
 // Enforcement "unknown" sends a cycle with null dates.

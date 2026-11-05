@@ -3,6 +3,7 @@ package version
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/sepayvn/sepay-cli/internal/build"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
@@ -23,15 +24,19 @@ func NewCmdVersion(f *cmdutil.Factory) *cobra.Command {
 	}
 }
 
-// Print writes the version banner, or version/commit/date under -o json|yaml.
+// Print writes the version banner and, for a tagged build, its release page; under -o json|yaml it
+// writes the version, build and platform fields instead.
 func Print(f *cmdutil.Factory) error {
 	ios := f.IOStreams
 	switch f.Global.Output {
 	case "json", "yaml":
 		info := map[string]string{
-			"version": build.Version,
-			"commit":  build.Commit,
-			"date":    build.Date,
+			"version":    build.Number(),
+			"commit":     build.Commit,
+			"date":       build.Date,
+			"go_version": runtime.Version(),
+			"os":         runtime.GOOS,
+			"arch":       runtime.GOARCH,
 		}
 		if f.Global.Output == "yaml" {
 			return jsonfmt.RenderYAML(ios.Out, info)
@@ -39,5 +44,8 @@ func Print(f *cmdutil.Factory) error {
 		return jsonfmt.RenderJSON(ios.Out, info)
 	}
 	fmt.Fprintln(ios.Out, build.String())
+	if url := build.ReleaseURL(); url != "" {
+		fmt.Fprintln(ios.Out, url)
+	}
 	return nil
 }

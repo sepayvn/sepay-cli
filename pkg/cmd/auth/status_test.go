@@ -11,8 +11,8 @@ import (
 
 func TestStatus_ListsProfilesNoToken(t *testing.T) {
 	f, _, out, _ := testFactory(t, "")
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
-	seedProfile(t, f, "personal", "my.sepay.vn", []string{"sandbox"})
+	seedProfile(t, f, "work", []string{"read"})
+	seedProfile(t, f, "personal", []string{"sandbox"})
 
 	require.NoError(t, run(NewCmdStatus(f)))
 	s := out.String()
@@ -24,7 +24,7 @@ func TestStatus_ListsProfilesNoToken(t *testing.T) {
 
 func TestStatus_TableShowsScopes(t *testing.T) {
 	f, _, out, _ := testFactory(t, "")
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read", "write"})
+	seedProfile(t, f, "work", []string{"read", "write"})
 
 	require.NoError(t, run(NewCmdStatus(f)))
 	assert.Contains(t, out.String(), "read,write")
@@ -32,7 +32,7 @@ func TestStatus_TableShowsScopes(t *testing.T) {
 
 func TestStatus_JSON(t *testing.T) {
 	f, _, out, _ := testFactory(t, "")
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Output = "json"
 
 	require.NoError(t, run(NewCmdStatus(f)))
@@ -44,7 +44,7 @@ func TestStatus_JSON(t *testing.T) {
 
 func TestStatus_ShowsEmail(t *testing.T) {
 	f, _, out, _ := testFactory(t, "")
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	mgr, _ := f.Credentials()
 	mgr.Hosts().Profiles["work"].Email = "dev@shop.vn"
 	require.NoError(t, mgr.Hosts().Save())
@@ -55,7 +55,7 @@ func TestStatus_ShowsEmail(t *testing.T) {
 
 func TestStatus_JSONIncludesEmail(t *testing.T) {
 	f, _, out, _ := testFactory(t, "")
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	mgr, _ := f.Credentials()
 	mgr.Hosts().Profiles["work"].Email = "dev@shop.vn"
 	require.NoError(t, mgr.Hosts().Save())

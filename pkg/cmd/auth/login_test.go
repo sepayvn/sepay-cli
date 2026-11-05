@@ -3,7 +3,6 @@ package auth
 import (
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,7 +259,7 @@ func TestLogin_JSONOutput(t *testing.T) {
 	s := out.String()
 	assert.Contains(t, s, `"logged_in": true`)
 	assert.Contains(t, s, `"host": "`+srv.URL+`"`)
-	assert.False(t, strings.Contains(s, "at_"), "no token in json output")
+	assert.NotContains(t, s, "at_", "no token in json output")
 }
 
 func TestLogin_RefusesToOpenAnUntrustedVerificationURI(t *testing.T) {

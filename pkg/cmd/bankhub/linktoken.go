@@ -69,7 +69,7 @@ type linkTokenCreated struct {
 }
 
 func newLinkTokenCmd(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "link-token <command>", Aliases: []string{"lt"}, Short: "Manage account-linking tokens"}
+	cmd := &cobra.Command{Use: "link-token <command>", Aliases: []string{"lt"}, Short: "Account-linking tokens"}
 	cmd.AddCommand(
 		newLinkTokenCreateCmd(f),
 		newLinkTokenGetCmd(f),
@@ -91,12 +91,16 @@ the end user through.
 The token value is masked unless you pass --show-token. That value is the only
 one "link-token get" accepts, and this response is the only place it is ever
 returned. "link-token revoke" takes the xid instead.`,
-		Args: cobra.NoArgs,
+		Example: `  sepay bankhub link-token create --company <company-xid> --purpose LINK_BANK_ACCOUNT`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := cmdutil.ValidateChoices(cmd, map[string][]string{
 				"purpose":  linkTokenPurposes,
 				"language": linkTokenLanguages,
 			}); err != nil {
+				return err
+			}
+			if err := cmdutil.ValidateRedirectURL("redirect-uri", redirectURI); err != nil {
 				return err
 			}
 			company, err := pickCompany(cmd.Context(), f, company, "company")
@@ -109,7 +113,7 @@ returned. "link-token revoke" takes the xid instead.`,
 			}
 			body := map[string]any{"company_xid": company, "purpose": purpose}
 			if purpose == "UNLINK_BANK_ACCOUNT" {
-				bankAccount, err = f.InputOrFlag(bankAccount, "bank-account", "Bank account xid to unlink")
+				bankAccount, err = pickBankAccount(cmd.Context(), f, bankAccount, "bank-account", "Bank account to unlink", company)
 				if err != nil {
 					return err
 				}
@@ -176,9 +180,12 @@ func runLinkTokenCreate(ctx context.Context, f *cmdutil.Factory, body map[string
 
 func newLinkTokenRevokeCmd(f *cmdutil.Factory) *cobra.Command {
 	return cmdutil.Annotate(&cobra.Command{
-		Use:   "revoke [link-token-xid]",
+		Use:   "revoke <link-token-xid>",
 		Short: "Revoke a link token by its xid",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Revoke a link token so its hosted link stops working.
+
+<link-token-xid> is the xid "sepay bankhub link-token create" prints. Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			xid, err := f.InputOrArg(cmdutil.FirstArg(args), "a link token xid", "Link token xid")
 			if err != nil {
@@ -219,10 +226,12 @@ func boolToFlag(b bool) string {
 
 func newLinkTokenGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get [link-token]",
+		Use:   "get <link-token>",
 		Short: "Show a link token by its token value",
 		Long: `Show a link token by its token value: what "link-token create --show-token"
-prints, not the xid. "link-token revoke" is the verb that takes the xid.`,
+prints, not the xid. "link-token revoke" is the verb that takes the xid.
+
+Prompted for on a terminal; required otherwise.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			token, err := f.InputOrArg(cmdutil.FirstArg(args), "a link token", "Link token")

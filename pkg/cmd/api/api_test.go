@@ -54,7 +54,7 @@ func TestAPI_GetPrintsResponse(t *testing.T) {
 }
 
 func TestAPI_YAMLKeepsIntegersIntact(t *testing.T) {
-	f, out := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, out := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{"amount":1000000,"big":9007199254740993,"rate":2.5}}`))
 	})
 	f.Global.Output = "yaml"
@@ -258,7 +258,7 @@ func cut(s, sep string) (string, string) {
 
 func TestAPI_PathLeavingTheBaseNeverReachesTheServer(t *testing.T) {
 	var reached bool
-	f, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, _ := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
 		reached = true
 		_, _ = w.Write([]byte(`{"status":"success","data":{}}`))
 	})
@@ -338,7 +338,7 @@ func TestParseHeaders_KeepsRepeatedNames(t *testing.T) {
 }
 
 func TestAPI_PrintsURLsUnescaped(t *testing.T) {
-	f, out := testFactory(t, func(w http.ResponseWriter, r *http.Request) {
+	f, out := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{"url":"https://shop.example/cb?a=1&b=<2>"}}`))
 	})
 	require.NoError(t, run(NewCmdAPI(f), "/webhooks"))

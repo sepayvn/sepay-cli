@@ -21,7 +21,7 @@ import (
 func NewCmdAuth(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth <command>",
-		Short: "Authenticate sepay and manage credentials",
+		Short: "Login, profiles and OAuth tokens",
 		Long: `Log in to SePay, inspect stored profiles, and manage OAuth tokens.
 
 Login uses the OAuth 2.1 device flow: sepay prints a code, you approve it in the
@@ -103,11 +103,10 @@ func revokeCredential(ctx context.Context, f *cmdutil.Factory, host string, cred
 }
 
 // authAPIError maps a 401 to "session expired" (exit 4) and wraps anything else under action.
-func authAPIError(f *cmdutil.Factory, action string, err error) error {
+func authAPIError(action string, err error) error {
 	var ae *auth.Error
 	if errors.As(err, &ae) && ae.StatusCode == http.StatusUnauthorized {
-		fmt.Fprintln(f.IOStreams.ErrOut, "session expired, run: sepay login")
-		return cmdutil.SilentError{Code: cmdutil.ExitAuth}
+		return cmdutil.AuthError{Err: errors.New("session expired, run: sepay login")}
 	}
 	return fmt.Errorf("could not %s: %w", action, err)
 }

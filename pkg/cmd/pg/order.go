@@ -52,7 +52,7 @@ type transaction struct {
 func maskCards(orders []order) {
 	for i := range orders {
 		for j := range orders[i].Transactions {
-			orders[i].Transactions[j].CardNumber = maskPAN(orders[i].Transactions[j].CardNumber)
+			orders[i].Transactions[j].CardNumber = maskPAN(orders[i].Transactions[j].CardNumber) //nolint:gosec // G602: j ranges over this slice
 		}
 	}
 }
@@ -73,7 +73,7 @@ func maskPAN(s string) string {
 func newOrderCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "order <command>",
-		Short: "Manage payment-gateway orders",
+		Short: "Payment Gateway orders",
 	}
 	cmd.AddCommand(newOrderListCmd(f), newOrderGetCmd(f), newOrderCancelCmd(f), newOrderVoidCmd(f))
 	return cmd
@@ -95,12 +95,21 @@ func newOrderListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List orders",
-		Args:    cobra.NoArgs,
+		Long: `List Payment Gateway orders. Filter by status, customer or creation date (--from,
+--to), or search by order id or invoice number.
+
+The INVOICE column is the <invoice-number> "pg order get", "cancel" and "void" take.`,
+		Example: `  sepay pg order list --status CAPTURED --from 2026-07-01
+  sepay pg order list --search DH1001`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := cmdutil.ValidateChoice(cmd, "status", orderStatuses); err != nil {
 				return err
 			}
 			if err := cmdutil.ValidateDays(cmd, "from", "to"); err != nil {
+				return err
+			}
+			if err := cmdutil.ValidateDateOrder(cmd, "from", "to"); err != nil {
 				return err
 			}
 			query := url.Values{}
@@ -129,14 +138,14 @@ func newOrderListCmd(f *cmdutil.Factory) *cobra.Command {
 	fl.StringVar(&from, "from", "", "From date (YYYY-MM-DD)")
 	fl.StringVar(&to, "to", "", "To date (YYYY-MM-DD)")
 	fl.StringVar(&customer, "customer", "", "Filter by customer id")
-	fl.StringVar(&q, "q", "", "Search by order id or invoice number")
+	fl.StringVar(&q, "search", "", "Search by order id or invoice number")
+	cmdutil.AliasFlag(fl, "q", "search")
 	fl.IntVar(&page, "page", 0, "Page number")
 	fl.IntVar(&perPage, "per-page", 0, "Rows per page (max 100)")
 	return cmd
 }
 
 func runOrderList(ctx context.Context, f *cmdutil.Factory, query url.Values) error {
-
 	client, err := f.NewPGClient()
 	if err != nil {
 		return err
@@ -173,9 +182,12 @@ func runOrderList(ctx context.Context, f *cmdutil.Factory, query url.Values) err
 
 func newOrderGetCmd(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get [invoice-number]",
+		Use:   "get <invoice-number>",
 		Short: "Show an order and its transactions",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Show an order and its transactions.
+
+<invoice-number> is the INVOICE column of "sepay pg order list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			invoice, err := pickOrder(cmd.Context(), f, argOrEmpty(args), "Select an order")
 			if err != nil {
@@ -223,9 +235,12 @@ func runOrderGet(ctx context.Context, f *cmdutil.Factory, invoice string) error 
 
 func newOrderCancelCmd(f *cmdutil.Factory) *cobra.Command {
 	return cmdutil.Annotate(&cobra.Command{
-		Use:   "cancel [invoice-number]",
+		Use:   "cancel <invoice-number>",
 		Short: "Cancel an order (bank-transfer, not yet captured)",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Cancel a bank-transfer order that has not been captured.
+
+<invoice-number> is the INVOICE column of "sepay pg order list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runOrderCancel(cmd.Context(), f, argOrEmpty(args))
 		},
@@ -257,9 +272,12 @@ func runOrderCancel(ctx context.Context, f *cmdutil.Factory, invoice string) err
 
 func newOrderVoidCmd(f *cmdutil.Factory) *cobra.Command {
 	return cmdutil.Annotate(&cobra.Command{
-		Use:   "void [invoice-number]",
+		Use:   "void <invoice-number>",
 		Short: "Void a captured card transaction (before settlement)",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Void a captured card payment before it settles.
+
+<invoice-number> is the INVOICE column of "sepay pg order list". Prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runOrderVoid(cmd.Context(), f, argOrEmpty(args))
 		},

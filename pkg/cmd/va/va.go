@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
-	bankaccount "github.com/sepayvn/sepay-cli/pkg/cmd/bank-account"
+	"github.com/sepayvn/sepay-cli/pkg/cmd/bankaccount"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/jsonfmt"
 
@@ -107,7 +107,13 @@ type VA struct {
 func NewCmdVA(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "va <command>",
-		Short: "Manage virtual accounts",
+		Short: "Virtual accounts (VA) under your bank accounts",
+		Long: `A virtual account (VA) is an extra account number under one of your bank
+accounts. Give each order or customer its own VA and an incoming transfer
+identifies itself by where it arrived, with no pay code to type.
+
+Every VA has a parent bank account, so "va list" and "va issue" take
+--bank-account (see: sepay bank-account list). issue and revoke work in sandbox only.`,
 	}
 	cmd.AddCommand(
 		newListCmd(f),
@@ -124,7 +130,14 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List virtual accounts under a bank account",
-		Args:    cobra.NoArgs,
+		Long: `List the virtual accounts under one bank account. Filter by status, official or
+static, or search the VA number or label.
+
+--bank-account is prompted for on a terminal; required otherwise. The ID column is
+the <va-xid> "va get" and "va revoke" take.`,
+		Example: `  sepay va list --bank-account <bank-account-xid>
+  sepay va list --bank-account <bank-account-xid> --official 1 --json`,
+		Args: cobra.NoArgs,
 	}
 	cmd.Flags().StringVar(&bankAccount, "bank-account", "", "Bank account xid (VA is nested)")
 	collect := cmdutil.BindListFlags(cmd.Flags(), map[string]string{
@@ -134,6 +147,7 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 		"static":          "Filter by static VA: 0|1",
 		"created-at-sort": "Sort by created date: asc|desc",
 	})
+	cmdutil.RenameFlag(cmd.Flags(), "search", "q", "Search VA number or label")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if err := cmdutil.ValidateChoices(cmd, map[string][]string{
 			"active":          {"0", "1", "true", "false"},
@@ -155,9 +169,13 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 func newGetCmd(f *cmdutil.Factory) *cobra.Command {
 	var bankAccount string
 	cmd := &cobra.Command{
-		Use:   "get [va_xid]",
+		Use:   "get <va-xid>",
 		Short: "Show a virtual account",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Show one virtual account.
+
+<va-xid> is the ID column of "sepay va list --bank-account <bank-account-xid>".
+The VA and its --bank-account are prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ba, err := bankaccount.PickOne(cmd.Context(), f, bankAccount, "bank-account", "Bank account")
 			if err != nil {
@@ -273,7 +291,13 @@ func newIssueCmd(f *cmdutil.Factory) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
 		Short: "Issue a virtual account on a bank account (sandbox only)",
-		Args:  cobra.NoArgs,
+		Long: `Issue a virtual account under one of your bank accounts (sandbox only). Whether it
+is official (a number issued by the bank) follows the bank account's setup, not a
+flag. --tid and --terminal-name apply to Vietcombank OneQR accounts only.
+
+--bank-account is prompted for on a terminal; required otherwise.`,
+		Example: `  sepay va issue --bank-account <bank-account-xid> --label "Order 1001"`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Production has no VA-issue endpoint, and --yes skips the confirm.
 			if err := f.AssertSandboxOnly("va issue"); err != nil {
@@ -331,9 +355,13 @@ func runIssue(ctx context.Context, f *cmdutil.Factory, baXID string, body issueB
 func newRevokeCmd(f *cmdutil.Factory) *cobra.Command {
 	var bankAccount string
 	cmd := &cobra.Command{
-		Use:   "revoke [va_xid|va_number]",
+		Use:   "revoke <va-xid|va-number>",
 		Short: "Revoke a virtual account (sandbox only)",
-		Args:  cobra.MaximumNArgs(1),
+		Long: `Revoke a virtual account, named by its xid or by its account number.
+
+Both are in "sepay va list --bank-account <bank-account-xid>". The VA and its
+--bank-account are prompted for on a terminal; required otherwise.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := f.AssertSandboxOnly("va revoke"); err != nil {
 				return err

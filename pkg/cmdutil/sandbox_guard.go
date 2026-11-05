@@ -53,7 +53,8 @@ func (f *Factory) UseSandbox(product string) error {
 	return f.AssertSandboxTarget()
 }
 
-// AssertSandboxOnly refuses a mutation with no production endpoint yet; it never rewrites the env.
+// AssertSandboxOnly refuses production for a command that runs on sandbox only: a mutation with no
+// production endpoint yet, or a sandbox-only read such as listen. It never rewrites the env.
 func (f *Factory) AssertSandboxOnly(command string) error {
 	if f.ActiveEnv() == config.EnvProduction {
 		return &FlagError{Err: fmt.Errorf("%s is sandbox-only; drop --env production", command)}

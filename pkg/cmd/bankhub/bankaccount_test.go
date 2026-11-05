@@ -80,3 +80,12 @@ func TestBankAccount_MoneyDecodingRejectsFractions(t *testing.T) {
 		assert.Error(t, err, "%s must be rejected, not silently narrowed", bad)
 	}
 }
+
+func TestBankAccountList_BankIsAnID(t *testing.T) {
+	f, _, _ := testFactory(t, okJSON(brokerBankHubBearer), func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("must not list with a bank code as the id")
+	})
+	err := run(f, "bank-account", "list", "--bank", "ACB")
+	require.EqualError(t, err, `--bank takes a Bank Hub bank id (a number), got "ACB"; it is not a bank code`)
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+}

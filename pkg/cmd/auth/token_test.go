@@ -13,7 +13,7 @@ import (
 func TestToken_PrintsStoredRefreshToken(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, out, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "work"
 
 	require.NoError(t, run(NewCmdToken(f)))
@@ -33,7 +33,7 @@ func TestToken_NotLoggedIn(t *testing.T) {
 func TestToken_UnknownProfileIsUsageError(t *testing.T) {
 	srv := newFakeOAuth(t)
 	f, _, _, _ := testFactory(t, srv.URL)
-	seedProfile(t, f, "work", "my.sepay.vn", []string{"read"})
+	seedProfile(t, f, "work", []string{"read"})
 	f.Global.Profile = "nosuch"
 
 	err := run(NewCmdToken(f))

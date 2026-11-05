@@ -24,9 +24,9 @@ func oauthHostAllowed(host string) bool {
 	return host == normalizeHost(defaultOAuthHost) || isLoopbackHost(host)
 }
 
-// AssertCredentialHost refuses to send a credential anywhere but canonical's host for env, or loopback.
+// AssertCredentialHost refuses to send a credential anywhere but canonical's host or loopback.
 // Run after ValidateCredentialOrigin.
-func AssertCredentialHost(env, rawURL, source, canonical string) error {
+func AssertCredentialHost(rawURL, source, canonical string) error {
 	host, err := credentialHost(rawURL, source)
 	if err != nil {
 		return err

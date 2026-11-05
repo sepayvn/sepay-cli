@@ -35,7 +35,7 @@ func (m *Manager) Env() string { return m.env }
 
 // Get returns a usable credential for prod, minting one if needed.
 func (m *Manager) Get(ctx context.Context, prod string) (*Credential, error) {
-	if c, err := m.store.Get(m.profile, prod, m.env); err == nil && !c.Expired() {
+	if c, err := m.store.Get(m.profile, prod, m.env, m.insecure); err == nil && !c.Expired() {
 		return c, nil
 	}
 	return m.mint(ctx, prod)
