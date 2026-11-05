@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.3](https://github.com/sepayvn/sepay-cli/compare/v0.1.2...v0.1.3) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **version:** paycode get/set are now paycode list/update; webhook listen runs on sandbox only (--env production exits 2); sepay docs is replaced by sepay help <topic>.
+
+### Features
+
+* **auth:** auth ls now runs auth status ([84a218f](https://github.com/sepayvn/sepay-cli/commit/84a218f1033a0ecc0816731f942f6166920059b3))
+* **version:** version --json drops the v prefix and adds go_version, os, arch ([84a218f](https://github.com/sepayvn/sepay-cli/commit/84a218f1033a0ecc0816731f942f6166920059b3))
+
+
+### Bug Fixes
+
+* **listen:** release the .own marker handle so Windows can remove it ([e4fc59b](https://github.com/sepayvn/sepay-cli/commit/e4fc59bb9eaca913da427da89632a092de82d590))
+* **network:** recognise connection refused on Windows ([e4fc59b](https://github.com/sepayvn/sepay-cli/commit/e4fc59bb9eaca913da427da89632a092de82d590))
+
 ## [0.1.2](https://github.com/sepayvn/sepay-cli/compare/v0.1.1...v0.1.2) (2026-11-03)
 
 
