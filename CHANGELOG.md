@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.4](https://github.com/sepayvn/sepay-cli/compare/v0.1.3...v0.1.4) (2026-11-06)
+
+
+### Features
+
+* **auth:** copy the login link and code with keys, and follow the locale on the login screen ([fb778ad](https://github.com/sepayvn/sepay-cli/commit/fb778ad0f2666665287fbf94ad98979a652a36c4))
+* **webhook:** replay on production with a preview and a typed --force ([fb778ad](https://github.com/sepayvn/sepay-cli/commit/fb778ad0f2666665287fbf94ad98979a652a36c4))
+
+
+### Bug Fixes
+
+* **webhook:** say plainly what the listen banner delivers ([fb778ad](https://github.com/sepayvn/sepay-cli/commit/fb778ad0f2666665287fbf94ad98979a652a36c4))
+
 ## [0.1.3](https://github.com/sepayvn/sepay-cli/compare/v0.1.2...v0.1.3) (2026-11-05)
 
 
