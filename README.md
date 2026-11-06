@@ -150,7 +150,7 @@ cho máy đọc.
 | `--idempotency-key` | Chạy lại một lệnh ghi bị gián đoạn mà không thực hiện hai lần |
 | `-v, --verbose` | Log gỡ lỗi; token và OTP luôn được che |
 
-Biến môi trường: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOTIFIER`, `NO_COLOR`. Chi tiết: `sepay help environment`.
+Biến môi trường: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOTIFIER`, `SEPAY_LANG`, `NO_COLOR`. Chi tiết: `sepay help environment`.
 
 ## Mã thoát
 

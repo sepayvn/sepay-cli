@@ -152,7 +152,7 @@ machine-readable metadata.
 | `--idempotency-key` | Retry an interrupted write without performing it twice |
 | `-v, --verbose` | Debug log; tokens and OTPs are always redacted |
 
-Environment variables: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOTIFIER`, `NO_COLOR`. Details: `sepay help environment`.
+Environment variables: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOTIFIER`, `SEPAY_LANG`, `NO_COLOR`. Details: `sepay help environment`.
 
 ## Exit codes
 

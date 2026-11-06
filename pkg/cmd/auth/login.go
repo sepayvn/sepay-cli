@@ -12,6 +12,7 @@ import (
 
 	"github.com/sepayvn/sepay-cli/internal/auth"
 	"github.com/sepayvn/sepay-cli/internal/config"
+	"github.com/sepayvn/sepay-cli/internal/prompt"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/jsonfmt"
 
@@ -41,8 +42,14 @@ func NewCmdLogin(f *cmdutil.Factory) *cobra.Command {
 		Long: `Authenticate with SePay via the OAuth 2.1 device flow.
 
 sepay prints a one-time code and opens your browser to approve it, then stores
-the resulting token in your OS keychain. On a machine with no browser, pass
---with-token to read an OAuth2 refresh token from stdin instead.
+the resulting token in your OS keychain. Over SSH or with no display it opens
+nothing: while it waits, press c to copy the link or y to copy the code. The copy
+uses the terminal's OSC 52 clipboard, which reaches your own machine over SSH;
+inside tmux, turn on set-clipboard or allow-passthrough. On a machine with no
+browser at all, pass --with-token to read an OAuth2 refresh token from stdin.
+
+The login screen follows your locale (Vietnamese for a vi locale, else English);
+set SEPAY_LANG=vi or SEPAY_LANG=en to choose.
 
 The profile is named after your account email, so logging in as another account
 creates its own profile; keep several side by side and switch with
@@ -152,6 +159,7 @@ func runLogin(ctx context.Context, f *cmdutil.Factory, opts *loginOptions) error
 
 func loginDeviceFlow(ctx context.Context, f *cmdutil.Factory, client *auth.Client, scopes []string) (*auth.Token, error) {
 	ios := f.IOStreams
+	text := currentLoginText(f)
 	da, pkce, err := client.RequestDeviceCode(ctx, scopes)
 	if err != nil {
 		return nil, err
@@ -159,27 +167,44 @@ func loginDeviceFlow(ctx context.Context, f *cmdutil.Factory, client *auth.Clien
 
 	// Never verification_uri_complete: the user must type the code, so a crafted link cannot auto-approve.
 	uri := da.VerificationURI
-	fmt.Fprintf(ios.ErrOut, "Open your browser to authenticate. Your code: %s\n", jsonfmt.Clean(da.UserCode))
+	code := jsonfmt.Clean(da.UserCode)
+	fmt.Fprintf(ios.ErrOut, text.code, code)
+	wait := prompt.DeviceWait{Code: code, Text: text.wait}
 
-	// verification_uri is server-supplied: open a browser only for a trusted origin, else print it.
+	// verification_uri is server-supplied: open or copy it only for a trusted origin, else print it.
 	originErr := cmdutil.ValidateCredentialOrigin(uri)
 	if originErr == nil {
 		originErr = cmdutil.AssertOAuthHost(uri, "verification_uri")
 	}
 	switch {
 	case originErr != nil:
-		fmt.Fprintf(ios.ErrOut, "! not opening a browser: %v\n", originErr)
-		fmt.Fprintf(ios.ErrOut, "Visit: %s\n", jsonfmt.Clean(uri))
+		fmt.Fprintf(ios.ErrOut, text.notOpening, originErr)
+		fmt.Fprintf(ios.ErrOut, text.visit, jsonfmt.Clean(uri))
 	case ios.IsStdoutTTY() && cmdutil.OpenBrowser(uri):
-		fmt.Fprintf(ios.ErrOut, "Opening %s\n", jsonfmt.Clean(uri))
+		fmt.Fprintf(ios.ErrOut, text.opening, jsonfmt.Clean(uri))
 	default:
-		fmt.Fprintf(ios.ErrOut, "Visit: %s\n", jsonfmt.Clean(uri))
+		fmt.Fprintf(ios.ErrOut, text.visit, jsonfmt.Clean(uri))
+	}
+	if originErr == nil {
+		wait.URL = uri
+		if cmdutil.CanOpenBrowser() {
+			wait.Open = func() bool { return cmdutil.OpenBrowser(uri) }
+		}
 	}
 
-	tok, err := client.PollToken(ctx, da.DeviceCode, pkce.Verifier,
-		time.Duration(da.Interval)*time.Second, time.Duration(da.ExpiresIn)*time.Second)
+	var tok *auth.Token
+	poll := func(ctx context.Context) error {
+		var err error
+		tok, err = client.PollToken(ctx, da.DeviceCode, pkce.Verifier,
+			time.Duration(da.Interval)*time.Second, time.Duration(da.ExpiresIn)*time.Second)
+		return err
+	}
+	shown, err := f.WaitDevice(ctx, wait, poll)
+	if !shown {
+		err = poll(ctx)
+	}
 	if err != nil {
-		return nil, loginPollError(err)
+		return nil, loginPollError(err, text)
 	}
 	return tok, nil
 }
@@ -227,8 +252,9 @@ func reportLogin(f *cmdutil.Factory, host, profile, email string, scopes []strin
 	if who == "" {
 		who = profile
 	}
-	fmt.Fprintf(ios.Out, "%s Logged in as %s\n", f.SuccessIcon(), jsonfmt.Clean(who))
-	fmt.Fprintln(ios.ErrOut, ios.Dim("add another account with: sepay login --profile <name>"))
+	text := currentLoginText(f)
+	fmt.Fprintf(ios.Out, text.loggedIn, f.SuccessIcon(), jsonfmt.Clean(who))
+	fmt.Fprintln(ios.ErrOut, ios.Dim(text.addAccount))
 	return nil
 }
 
@@ -242,16 +268,16 @@ func loginResult(host, profile, email string, scopes []string) map[string]any {
 	}
 }
 
-func loginPollError(err error) error {
+func loginPollError(err error, text loginText) error {
 	var authErr *auth.Error
 	if !errors.As(err, &authErr) {
 		return err
 	}
 	switch authErr.Code {
 	case auth.CodeAccessDenied:
-		return errors.New("authorization denied")
+		return errors.New(text.denied)
 	case auth.CodeExpiredToken:
-		return errors.New("the login code expired, run: sepay login")
+		return errors.New(text.expired)
 	}
 	return err
 }

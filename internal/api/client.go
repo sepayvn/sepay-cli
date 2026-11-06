@@ -274,7 +274,7 @@ func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptio
 			continue
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests && canRetry && attempt < c.MaxRetries && !isExhaustedQuota(body) {
+		if resp.StatusCode == http.StatusTooManyRequests && canRetry && attempt < c.MaxRetries && !outlastsBackoff(body) {
 			wait := Backoff(resp.Header.Get("Retry-After"), attempt)
 			if c.Logf != nil {
 				c.Logf("Rate limited (429). Waiting %s before retry (attempt %d)...", wait, attempt+1)
@@ -374,13 +374,14 @@ func Backoff(retryAfter string, attempt int) time.Duration {
 	return time.Duration(min(1<<attempt, capSecs)) * time.Second
 }
 
-// isExhaustedQuota reports whether a 429 is a spent quota, which backoff never clears.
-func isExhaustedQuota(body []byte) bool {
+// outlastsBackoff reports whether a 429 lasts longer than any backoff: a spent quota, or a
+// transaction's replay cap, whose window is counted in minutes.
+func outlastsBackoff(body []byte) bool {
 	var env struct {
 		ErrorCode string `json:"error_code"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
 		return false
 	}
-	return env.ErrorCode == "quota_exceeded"
+	return env.ErrorCode == "quota_exceeded" || env.ErrorCode == "replay_rate_limited"
 }

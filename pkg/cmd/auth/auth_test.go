@@ -229,6 +229,8 @@ func writeJSON(w http.ResponseWriter, v any) {
 func testFactory(t *testing.T, oauthURL string) (*cmdutil.Factory, *bytes.Buffer, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	keyring.MockInit()
+	// The login screen follows the machine's locale; tests read the English one unless they set it.
+	t.Setenv("SEPAY_LANG", "en")
 	dir := t.TempDir()
 	ios, in, out, errOut := iostreams.Test()
 

@@ -411,6 +411,13 @@ func TestErrorMessage_PaycodeConflictsAreEnglish(t *testing.T) {
 	}
 }
 
+// The server's replay_busy message is Vietnamese and says nothing the fixed line does not.
+func TestErrorMessage_ReplayBusyDropsTheServerMessage(t *testing.T) {
+	err := &api.HTTPError{StatusCode: 503, Code: "replay_busy", Message: "Đang phát lại, vui lòng đợi"}
+	assert.Equal(t, "another replay of this transaction is in progress; retry shortly", errorMessage(err))
+	assert.Equal(t, ExitError, ExitCodeForError(err))
+}
+
 // `sepay help errors` documents what HandleError does, so it must name every code the CLI rewords
 // and give the exit code ExitCodeForError returns for the codes that set their own.
 func TestErrorsTopic_MatchesTheCodesTheCLIHandles(t *testing.T) {

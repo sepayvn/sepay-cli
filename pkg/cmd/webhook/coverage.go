@@ -24,21 +24,28 @@ var listenEvents = []string{eventPaymentIn, eventPaymentOut}
 
 var streamEvents = []string{eventPaymentIn, eventPaymentOut, eventVACredit}
 
-// kindLabels keep va_credit from reading like an --events value.
-var kindLabels = map[string]string{
-	eventVACredit: "virtual-account transfers",
-}
-
-func joinKinds(kinds []string) string {
-	out := make([]string, 0, len(kinds))
-	for _, k := range kinds {
-		if label, ok := kindLabels[k]; ok {
-			out = append(out, label)
-			continue
-		}
-		out = append(out, k)
+// kindsPhrase names what a stream carries in frame types: the hub types a VA credit payment_in, so
+// va_credit only shows as which payment_in frames arrive. Empty when every kind arrives.
+func kindsPhrase(kinds []string) string {
+	in := slices.Contains(kinds, eventPaymentIn)
+	out := slices.Contains(kinds, eventPaymentOut)
+	va := slices.Contains(kinds, eventVACredit)
+	switch {
+	case in && out && va:
+		return ""
+	case in && out:
+		return "payment_in except to virtual accounts, and payment_out"
+	case in && va:
+		return "payment_in only"
+	case in && !out:
+		return "payment_in only, except to virtual accounts"
+	case out && va:
+		return "payment_out, and payment_in to virtual accounts only"
+	case out:
+		return "payment_out only"
+	default:
+		return "payment_in to virtual accounts only"
 	}
-	return strings.Join(out, ", ")
 }
 
 // anyAccount is an account no webhook names; only a company-wide webhook delivers for it.
@@ -105,7 +112,7 @@ func (w Webhook) delivers(d delivery) (match, string) {
 		case !d.onVA() && !cfg.ReceivePrimary:
 			return matchDrops, "its webhook is set to skip transfers to the account number itself on this account"
 		case d.onVA() && cfg.VaMode == "none":
-			return matchDrops, "its webhook is set to skip virtual-account transfers on this account"
+			return matchDrops, "its webhook is set to skip virtual accounts on this account"
 		case d.onVA() && cfg.VaMode == "list":
 			if len(w.SubAccountXIDs) == 0 {
 				return matchDrops, reasonEmptyVAList
@@ -115,11 +122,11 @@ func (w Webhook) delivers(d delivery) (match, string) {
 		}
 	} else if w.OnlyVA {
 		// No per-account config: the backend falls back to only_va.
-		if !d.onVA() {
-			return matchDrops, "its webhook covers virtual-account transfers only, so a transfer to the account number itself is not delivered"
-		}
 		if len(w.SubAccountXIDs) == 0 {
 			return matchDrops, reasonEmptyVAList
+		}
+		if !d.onVA() {
+			return matchDrops, "its webhook covers virtual accounts only, so a transfer to the account number itself is not delivered"
 		}
 		undecided = true
 	}
@@ -166,21 +173,21 @@ func deliverable(hooks []Webhook, d delivery) (bool, string) {
 	}
 }
 
-// coverageFor reports which streamEvents reach account, else why not. Code filters are ignored:
-// real traffic may carry a pay code.
+// coverageFor reports which streamEvents reach account, else every distinct reason the others are
+// dropped, so one filter is not read as the whole story. Code filters are ignored: real traffic may
+// carry a pay code.
 func coverageFor(hooks []Webhook, account string) ([]string, string) {
-	var kinds []string
-	reason := ""
+	var kinds, reasons []string
 	for _, event := range streamEvents {
 		ok, why := deliverable(hooks, delivery{account: account, event: event, hasCode: true})
 		switch {
 		case ok:
 			kinds = append(kinds, event)
-		case reason == "":
-			reason = why
+		case !slices.Contains(reasons, why):
+			reasons = append(reasons, why)
 		}
 	}
-	return kinds, reason
+	return kinds, strings.Join(reasons, "; ")
 }
 
 func activeWebhooks(hooks []Webhook) []Webhook {
@@ -280,10 +287,12 @@ func describeCoverage(ctx context.Context, f *cmdutil.Factory, set webhookSet) {
 	for _, xid := range named {
 		kinds, why := coverageFor(hooks, xid)
 		switch {
+		case len(remainder) > 0 && slices.Equal(kinds, remainder):
+			// the remainder line already says it
 		case len(kinds) == len(streamEvents):
 			full[xid] = true
 		case len(kinds) > 0:
-			notes = append(notes, label(xid)+" — delivering "+joinKinds(kinds)+" only")
+			notes = append(notes, label(xid)+" — delivering "+kindsPhrase(kinds))
 		default:
 			notes = append(notes, label(xid)+" — "+why)
 		}
@@ -298,14 +307,18 @@ func describeCoverage(ctx context.Context, f *cmdutil.Factory, set webhookSet) {
 		fmt.Fprintln(out, "  Any other bank account of this company produces no events.")
 		return
 	}
-	cmdutil.Fprintf(out, "  %s for every other bank account of this company.\n", deliveringPhrase(remainder))
+	scope := "every other"
+	if len(full) == 0 && len(notes) == 0 {
+		scope = "every"
+	}
+	cmdutil.Fprintf(out, "  %s for %s bank account of this company.\n", deliveringPhrase(remainder), scope)
 }
 
 func deliveringPhrase(kinds []string) string {
-	if len(kinds) == len(streamEvents) {
-		return "Delivering"
+	if phrase := kindsPhrase(kinds); phrase != "" {
+		return "Delivering " + phrase
 	}
-	return "Delivering " + joinKinds(kinds)
+	return "Delivering"
 }
 
 func sortedLabels(set map[string]bool, label func(string) string) []string {
@@ -332,7 +345,7 @@ func assertDeliverable(ctx context.Context, client *api.Client, opts testOptions
 	return &cmdutil.FlagError{Err: fmt.Errorf(
 		"this event would not be delivered: %s.\n"+
 			"  A webhook delivers an event only when every filter on it matches: the bank account,\n"+
-			"  the event direction, the virtual-account rules and the pay code rules.\n"+
+			"  the event direction, the virtual account rules and the pay code rules.\n"+
 			"  List them with: sepay webhook list\n"+
 			"  Cover every account without sending HTTP anywhere:\n"+
 			"    sepay webhook create --listen-only --bank-mode all", why)}

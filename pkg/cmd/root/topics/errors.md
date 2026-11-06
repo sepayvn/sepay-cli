@@ -28,6 +28,9 @@ other code passes through with the server's message, which may be in Vietnamese,
 | `sms_not_allowed` | 1 | Your plan has no SMS connections. Use `--connection api` |
 | `connection_not_supported` | 1 | The bank has no API connection. Pick another bank, or `--connection sms` on a plan with SMS |
 | `replay_not_dispatched` | 1 | `webhook replay` sent nothing: the delivery was filtered, the webhook is off, the transaction is gone, or the same replay is still running. The server's reason is printed |
+| `replay_already_delivered` | 1 | Production `webhook replay`: the handler already acknowledged the last delivery. Replay it anyway with `--force`, which asks you to type the transaction id |
+| `replay_rate_limited` | 1 | Production `webhook replay`: the transaction reached SePay's replay cap, counted across its webhooks. Not retried; the message says when to try again |
+| `replay_busy` | 1 | Another replay of the same transaction is still running. Retry shortly |
 | `unsupported_api_version` | 1 | The CLI is too old for the server. Upgrade |
 | `not_found` | 1 | The endpoint exists only in the sandbox; the server's message says what to do |
 | `paycode_prefix_exists` | 1 | The company already has a pay-code structure with that prefix, letter case aside. Change it with `sepay paycode update --structure <prefix>` |

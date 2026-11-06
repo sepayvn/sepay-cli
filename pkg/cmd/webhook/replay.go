@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
+	"github.com/sepayvn/sepay-cli/pkg/cmd/transaction"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,11 @@ const logPickerSize = 20
 type replayTarget struct {
 	TransactionID string `json:"transaction_id"`
 	WebhookXID    string `json:"webhook_xid"`
+}
+
+type replayRequest struct {
+	replayTarget
+	Force bool `json:"force,omitempty"`
 }
 
 // target returns false when the row is not replayable or misses either half.
@@ -110,18 +116,28 @@ func resolveReplayTarget(ctx context.Context, f *cmdutil.Factory, transactionID,
 
 func newReplayCmd(f *cmdutil.Factory) *cobra.Command {
 	var transactionID, webhookXID string
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "replay [transaction-id]",
-		Short: "Re-deliver a logged webhook event (sandbox only)",
+		Short: "Re-deliver a logged webhook event",
 		Long: `Re-send one delivery to its webhook, addressed by the transaction it carried
 and the webhook that received it. Both come from "sepay webhook logs", and from
 the txn= and wh= values "sepay webhook listen" prints.
 
 With only a transaction, the webhook is taken from its logged deliveries when
 there is one, and asked for on a terminal when there are several. With neither,
-a terminal offers the recent replayable deliveries.`,
-		Example: `  sepay webhook replay <transaction-id> --webhook <webhook-xid>`,
-		Args:    cobra.MaximumNArgs(1),
+a terminal offers the recent replayable deliveries.
+
+On production a replay reaches your live handler, which credits the order again
+unless it dedupes. So the transaction, its amount, the URL and the last result
+are shown before the confirm; a delivery your handler already acknowledged is
+refused unless you pass --force and type the transaction id back; and SePay
+caps how often one transaction is replayed, saying when to try again. Reading
+the transaction and its last delivery needs the "read" scope on production,
+besides "webhook:write".`,
+		Example: `  sepay webhook replay <transaction-id> --webhook <webhook-xid>
+  sepay webhook replay <transaction-id> --webhook <webhook-xid> --env production`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				if transactionID != "" {
@@ -135,29 +151,90 @@ a terminal offers the recent replayable deliveries.`,
 					return &cmdutil.FlagError{Err: fmt.Errorf("--%s needs a value", flag)}
 				}
 			}
-			// Before the lookup: production has no replay endpoint, and --yes skips the confirm.
-			if err := f.AssertSandboxOnly("webhook replay"); err != nil {
-				return err
+			// Before any lookup: a forced production replay is a terminal-only action.
+			production := f.IsProductionTarget()
+			if force && production && !f.CanPrompt() {
+				return &cmdutil.FlagError{Err: errors.New("--force on production must be confirmed on a terminal; --yes does not confirm it")}
 			}
 			target, err := resolveReplayTarget(cmd.Context(), f, transactionID, webhookXID)
 			if err != nil {
 				return err
 			}
-			return runReplay(cmd.Context(), f, target)
+			if production {
+				if err := previewProductionReplay(cmd.Context(), f, target); err != nil {
+					return err
+				}
+			}
+			return runReplay(cmd.Context(), f, replayRequest{replayTarget: target, Force: force}, production)
 		},
 	}
 	fl := cmd.Flags()
 	fl.StringVar(&transactionID, "transaction", "", "Transaction id of the delivery (same as the argument)")
 	fl.StringVar(&webhookXID, "webhook", "", "Webhook xid of the delivery")
+	fl.BoolVar(&force, "force", false, "Replay a delivery the handler already acknowledged")
 	return cmdutil.Annotate(cmd, map[string]string{
-		cmdutil.AnnEnvs:     "sandbox",
+		cmdutil.AnnScope:    "webhook:write",
 		cmdutil.AnnConfirms: "always",
 	})
 }
 
-func runReplay(ctx context.Context, f *cmdutil.Factory, target replayTarget) error {
-	if err := f.ConfirmMutation(fmt.Sprintf("replay transaction %s to webhook %s", target.TransactionID, target.WebhookXID), true); err != nil {
+// previewProductionReplay shows what a production replay re-sends, before the confirm and on its stream.
+func previewProductionReplay(ctx context.Context, f *cmdutil.Factory, target replayTarget) error {
+	// Unattended without --yes the confirm fails anyway; reading first would only change its exit code.
+	if f.Global.Output == "json" || f.Global.Output == "yaml" || (!f.Global.Yes && !f.CanPrompt()) {
+		return nil
+	}
+	out := f.ConfirmOut()
+	client, err := f.NewAPIClient()
+	if err != nil {
 		return err
+	}
+	txSeg, err := cmdutil.PathSegment("transaction id", target.TransactionID)
+	if err != nil {
+		return err
+	}
+	env, err := client.Get(ctx, "/transactions/"+txSeg, nil)
+	if err != nil {
+		return err
+	}
+	tx, err := api.DataInto[transaction.Transaction](env)
+	if err != nil {
+		return err
+	}
+	env, err = client.Get(ctx, "/webhook-logs", url.Values{
+		"transaction_id": {target.TransactionID}, "webhook_xid": {target.WebhookXID}, "per_page": {"1"},
+	})
+	if err != nil {
+		return err
+	}
+	logs, _, err := api.ListInto[Log](env)
+	if err != nil {
+		return err
+	}
+
+	sentTo, last := "-", "-"
+	if len(logs) > 0 {
+		l := logs[0]
+		sentTo = l.urlLabel()
+		last = fmt.Sprintf("%s · HTTP %s · %s", l.Status, intOrDash(l.ResponseStatusCode), l.CreatedAt)
+	}
+	cmdutil.Fprintf(out, "Transaction  %s\n", target.TransactionID)
+	cmdutil.Fprintf(out, "Amount       %s\n", transaction.SignedAmount(f, tx))
+	cmdutil.Fprintf(out, "Sent to      %s\n", sentTo)
+	cmdutil.Fprintf(out, "Last result  %s\n", last)
+	cmdutil.Fprintf(out, "! a handler that does not dedupe may credit this order twice\n")
+	return nil
+}
+
+func runReplay(ctx context.Context, f *cmdutil.Factory, req replayRequest, production bool) error {
+	action := fmt.Sprintf("replay transaction %s to webhook %s", req.TransactionID, req.WebhookXID)
+	if err := f.ConfirmMutation(action, true); err != nil {
+		return err
+	}
+	if req.Force && production {
+		if err := f.ConfirmByTyping("forced "+action, req.TransactionID); err != nil {
+			return err
+		}
 	}
 
 	client, err := f.NewAPIClient()
@@ -168,7 +245,7 @@ func runReplay(ctx context.Context, f *cmdutil.Factory, target replayTarget) err
 	if err != nil {
 		return err
 	}
-	env, err := client.Post(ctx, "/webhook-logs/replay", api.WriteOptions{Body: target, IdempotencyKey: key})
+	env, err := client.Post(ctx, "/webhook-logs/replay", api.WriteOptions{Body: req, IdempotencyKey: key})
 	if err != nil {
 		return err
 	}
@@ -181,7 +258,7 @@ func runReplay(ctx context.Context, f *cmdutil.Factory, target replayTarget) err
 		// A listen-mode webhook delivers to the stream, so its log holds no handler response.
 		if res.Log == nil || res.Log.Status == logStatusListen {
 			f.ErrPrintf("Replayed (%s). Check the result with: sepay webhook logs --transaction %s --webhook %s\n",
-				deliveredWord(res.Delivered), target.TransactionID, target.WebhookXID)
+				deliveredWord(res.Delivered), req.TransactionID, req.WebhookXID)
 			return nil
 		}
 		if res.Log.ResponseStatusCode == nil {

@@ -160,7 +160,7 @@ func TestTransaction_MaskedFieldsAreNotZero(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
 	f := &cmdutil.Factory{IOStreams: ios, Global: &cmdutil.GlobalOptions{Output: "table"}}
 
-	amount := signedAmount(f, tx)
+	amount := SignedAmount(f, tx)
 	assert.Contains(t, amount, "hidden", "a withheld amount must not read as a number")
 	assert.NotContains(t, amount, "+0", "direction comes from transfer_type, not the amount")
 	assert.Equal(t, "(hidden)", dashHidden(tx.TransactionContent))
@@ -169,7 +169,7 @@ func TestTransaction_MaskedFieldsAreNotZero(t *testing.T) {
 	out := int64(5000000)
 	empty := ""
 	visible := Transaction{TransferType: "out", AmountOut: &out, TransactionContent: &empty}
-	assert.Contains(t, signedAmount(f, visible), "5")
+	assert.Contains(t, SignedAmount(f, visible), "5")
 	assert.Equal(t, "-", dashHidden(visible.TransactionContent))
 }
 
@@ -286,7 +286,7 @@ func TestSignedAmount_NeedsBothDirectionAndFigure(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, jsonfmt.Clean(signedAmount(f, tc.tx)))
+			assert.Equal(t, tc.want, jsonfmt.Clean(SignedAmount(f, tc.tx)))
 		})
 	}
 }

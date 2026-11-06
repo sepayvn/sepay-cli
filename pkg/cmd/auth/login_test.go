@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 
+	"github.com/sepayvn/sepay-cli/internal/auth"
 	"github.com/sepayvn/sepay-cli/internal/config"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 )
@@ -126,6 +127,52 @@ func TestLogin_DeviceFlow_PendingThenApproved(t *testing.T) {
 
 	require.NoError(t, run(NewCmdLogin(f)))
 	assert.Contains(t, out.String(), "✓ Logged in")
+}
+
+func TestLogin_FollowsAVietnameseLocale(t *testing.T) {
+	srv := newFakeOAuth(t)
+	srv.email = "dev@shop.vn"
+	f, _, out, errOut := testFactory(t, srv.URL)
+	t.Setenv("SEPAY_LANG", "")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	t.Setenv("LANG", "vi_VN.UTF-8")
+
+	require.NoError(t, run(NewCmdLogin(f)))
+	assert.Contains(t, errOut.String(), "Mã của bạn: WDJB-MJHT")
+	assert.Contains(t, errOut.String(), "Truy cập: ")
+	assert.Contains(t, out.String(), "✓ Đã đăng nhập: dev@shop.vn")
+}
+
+func TestLogin_JSONIsTheSameInEveryLanguage(t *testing.T) {
+	srv := newFakeOAuth(t)
+	var got []string
+	for _, lang := range []string{"en", "vi"} {
+		f, _, out, _ := testFactory(t, srv.URL)
+		t.Setenv("SEPAY_LANG", lang)
+		f.Global.Output = "json"
+		require.NoError(t, run(NewCmdLogin(f)))
+		got = append(got, out.String())
+	}
+	assert.Equal(t, got[0], got[1])
+}
+
+func TestLoginText_MachineOutputStaysEnglish(t *testing.T) {
+	t.Setenv("SEPAY_LANG", "vi")
+	for _, output := range []string{"json", "yaml"} {
+		f := &cmdutil.Factory{Global: &cmdutil.GlobalOptions{Output: output}}
+		assert.Equal(t, loginTextEN.denied, currentLoginText(f).denied, output)
+	}
+	f := &cmdutil.Factory{Global: &cmdutil.GlobalOptions{Output: "table"}}
+	assert.Equal(t, loginTextVI.denied, currentLoginText(f).denied)
+}
+
+func TestLoginPollError_SpeaksTheScreenLanguage(t *testing.T) {
+	denied := &auth.Error{Code: auth.CodeAccessDenied}
+	require.EqualError(t, loginPollError(denied, loginTextEN), "authorization denied")
+	require.EqualError(t, loginPollError(denied, loginTextVI), "yêu cầu đăng nhập đã bị từ chối")
+	expired := &auth.Error{Code: auth.CodeExpiredToken}
+	assert.EqualError(t, loginPollError(expired, loginTextVI), "mã đăng nhập đã hết hạn, chạy lại: sepay login")
 }
 
 func TestLogin_WithToken_CIPath(t *testing.T) {

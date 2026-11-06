@@ -12,9 +12,14 @@ Like any Go program it also honours `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `SS
 | `SEPAY_PROFILE` | Profile to use, as `--profile` |
 | `NO_COLOR` | Disable color, as `--no-color` |
 | `SEPAY_NO_UPDATE_NOTIFIER` | Turn off the daily update notice |
+| `SEPAY_LANG` | Language of the `sepay login` screen: `vi` or `en` |
 
 An on/off variable reads its value: `0`, `false`, `no`, `off` and empty mean off, so `NO_COLOR=0`
 keeps color on.
+
+Without `SEPAY_LANG`, the login screen follows `LC_ALL`, `LC_MESSAGES` or `LANG`, the first one set
+(on Windows with none set, the display language): a `vi` locale shows Vietnamese, anything else
+English. Help, flags, `--json` output and every other message stay English.
 
 Without `SEPAY_CONFIG_DIR` the directory is:
 

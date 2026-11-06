@@ -5,12 +5,12 @@ package keychain
 
 import (
 	"errors"
-	"os"
-	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/sepayvn/sepay-cli/internal/envvar"
 )
 
 // ErrNotFound means the keychain answered and holds no entry for the key.
@@ -34,7 +34,7 @@ var (
 )
 
 func defaultTimeout() time.Duration {
-	if runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+	if envvar.NoDisplay() {
 		return headlessTimeout
 	}
 	return interactiveTimeout

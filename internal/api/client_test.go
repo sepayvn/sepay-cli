@@ -254,6 +254,23 @@ func TestClient_ExhaustedQuotaIsNotRetried(t *testing.T) {
 	assert.Equal(t, 1, calls, "a spent quota must not be retried")
 }
 
+func TestClient_ReplayRateLimitIsNotRetried(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"status":"error","error_code":"replay_rate_limited","message":"retry in 42 minutes"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "tok")
+	_, err := c.Post(context.Background(), "/webhook-logs/replay", WriteOptions{IdempotencyKey: "k1"})
+
+	require.Error(t, err)
+	assert.Equal(t, 1, calls, "a transaction's hourly replay cap outlasts any backoff")
+}
+
 func TestClient_RateLimitIsStillRetried(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

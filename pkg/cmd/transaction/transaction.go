@@ -205,7 +205,7 @@ func runList(ctx context.Context, f *cmdutil.Factory, query url.Values) error {
 		}
 		t := jsonfmt.NewTable("ID", "DATE", "AMOUNT", "CONTENT", "CODE", "BANK", "WH").Truncatable("CONTENT", "BANK")
 		for _, tx := range txns {
-			t.AddRow(tx.ID, tx.TransactionDate, signedAmount(f, tx),
+			t.AddRow(tx.ID, tx.TransactionDate, SignedAmount(f, tx),
 				dashHidden(tx.TransactionContent), dash(tx.Code), tx.BankBrandName, webhookMark(f, tx.WebhookSuccess))
 		}
 		if err := f.RenderTable(t); err != nil {
@@ -242,7 +242,7 @@ func runGet(ctx context.Context, f *cmdutil.Factory, xid string) error {
 		t := jsonfmt.NewTable("FIELD", "VALUE").Truncatable("VALUE")
 		t.AddRow("ID", tx.ID)
 		t.AddRow("Date", tx.TransactionDate)
-		t.AddRow("Amount", signedAmount(f, tx))
+		t.AddRow("Amount", SignedAmount(f, tx))
 		t.AddRow("Accumulated", amountOrHidden(tx.Accumulated))
 		t.AddRow("Content", dashHidden(tx.TransactionContent))
 		t.AddRow("Reference", dashHidden(tx.ReferenceNumber))
@@ -257,8 +257,8 @@ func runGet(ctx context.Context, f *cmdutil.Factory, xid string) error {
 
 const hidden = "(hidden)"
 
-// signedAmount renders the amount with a sign from TransferType; neither part is guessed when missing.
-func signedAmount(f *cmdutil.Factory, tx Transaction) string {
+// SignedAmount renders the amount with a sign from TransferType; neither part is guessed when missing.
+func SignedAmount(f *cmdutil.Factory, tx Transaction) string {
 	switch tx.TransferType {
 	case "out":
 		return f.IOStreams.Red("-" + amountOrHidden(tx.AmountOut))

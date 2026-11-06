@@ -4,12 +4,20 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/sepayvn/sepay-cli/internal/envvar"
 )
+
+// CanOpenBrowser reports whether a launched browser would appear in front of the user. Over SSH or
+// on a display-less server xdg-open may still start, open nothing, and report success.
+func CanOpenBrowser() bool {
+	return !envvar.RemoteSession() && !envvar.NoDisplay()
+}
 
 // OpenBrowser opens an http/https rawURL via a fixed launcher (never a shell) and reports whether it started.
 // A false result makes the caller print the URL instead.
 func OpenBrowser(rawURL string) bool {
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+	if !CanOpenBrowser() || (!strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://")) {
 		return false
 	}
 	var name string

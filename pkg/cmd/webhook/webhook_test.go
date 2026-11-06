@@ -942,6 +942,21 @@ func TestWebhook_SandboxOnlyVerbsSaySoInShort(t *testing.T) {
 	}
 }
 
+// help and --map=json read the scope from the annotation; a verb that writes on production
+// without one tells the reader no scope is needed.
+func TestWebhook_ProductionWritesDeclareTheirScope(t *testing.T) {
+	f, _, _ := testFactory(t, func(http.ResponseWriter, *http.Request) {})
+	writes := map[string]bool{"create": true, "update": true, "delete": true, "replay": true}
+	for _, c := range NewCmdWebhook(f).Commands() {
+		if !writes[c.Name()] {
+			continue
+		}
+		delete(writes, c.Name())
+		assert.Equal(t, "webhook:write", cmdutil.Annotation(c, cmdutil.AnnScope), c.Name())
+	}
+	assert.Empty(t, writes, "every listed verb must exist")
+}
+
 func TestUpdate_BankConfigOnly(t *testing.T) {
 	f, srv := newReachServer(t, storedSinglePlain)
 	require.NoError(t, run(NewCmdWebhook(f), "update", "wh_1", "--bank-config", "ba_plain=on:none"))

@@ -30,6 +30,9 @@ var apiErrorMessage = map[string]string{ //nolint:gosec // G101: error messages,
 	"access_revoked":           "your access to this stream was revoked, run: sepay login",
 	"sse_hub_disabled":         "the listen feature is switched off on SePay's side; it works again once SePay turns it back on",
 	"replay_not_dispatched":    "the replay was not sent",
+	"replay_already_delivered": "the last delivery of this transaction to this webhook already succeeded; replay it anyway with --force",
+	"replay_rate_limited":      "this transaction reached its replay limit",
+	"replay_busy":              "another replay of this transaction is in progress; retry shortly",
 	"paycode_prefix_exists":    "this company already has a pay-code structure with that prefix (letter case aside); change it with: sepay paycode update --structure <prefix>",
 	"paycode_version_conflict": "the pay-code configuration changed since it was read; nothing was saved, run the command again (with a new --idempotency-key if you passed one)",
 
@@ -55,7 +58,7 @@ var apiErrorMessage = map[string]string{ //nolint:gosec // G101: error messages,
 }
 
 // reasonCodes are codes whose server message is appended as the reason.
-var reasonCodes = map[string]bool{"replay_not_dispatched": true}
+var reasonCodes = map[string]bool{"replay_not_dispatched": true, "replay_already_delivered": true, "replay_rate_limited": true}
 
 func errorMessage(err error) string {
 	var apiErr *api.HTTPError

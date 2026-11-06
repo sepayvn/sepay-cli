@@ -1,6 +1,7 @@
 package cmdutil
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -90,6 +91,18 @@ func (p terminalPrompter) Confirm(label string, def bool) (bool, error) {
 
 func (p terminalPrompter) Accounts(label string, accounts []FormAccount) ([]FormAnswer, error) {
 	return prompt.Accounts(p.t, label, accounts)
+}
+
+// WaitDevice draws the device-login wait screen while poll runs; shown is false, and poll has not
+// run, when no prompt is possible. A Ctrl+C there returns ErrInterrupted.
+func (f *Factory) WaitDevice(ctx context.Context, w prompt.DeviceWait, poll func(context.Context) error) (shown bool, err error) {
+	if !f.canPrompt() {
+		return false, nil
+	}
+	f.bannerBeforePrompt()
+	t := prompt.Terminal{In: f.IOStreams.In, Out: f.promptOut(), Color: f.IOStreams.ColorEnabled()}
+	_, err = asked(struct{}{}, prompt.WaitDevice(ctx, t, w, poll))
+	return true, err
 }
 
 // asked maps the prompt's interrupt to ErrInterrupted: the prompt reads ^C as a key in raw mode,
@@ -245,6 +258,22 @@ func (f *Factory) Confirm(label string) (bool, error) {
 		return false, &FlagError{Err: fmt.Errorf("%s requires confirmation; pass --yes", label)}
 	}
 	return f.AskYesNo(label, false)
+}
+
+// ConfirmByTyping makes the user type want back before action. --yes does not answer it and a
+// run without a terminal is a usage error, so the action stays one a person takes by hand.
+func (f *Factory) ConfirmByTyping(action, want string) error {
+	if !f.canPrompt() {
+		return &FlagError{Err: fmt.Errorf("%s must be confirmed on a terminal; --yes does not confirm it", action)}
+	}
+	got, err := f.Input(fmt.Sprintf("Type %s to confirm", want))
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(got) != want {
+		return &FlagError{Err: fmt.Errorf("%s cancelled: the text typed did not match", action)}
+	}
+	return nil
 }
 
 // AskYesNo prompts for yes/no, returning def on Enter; --yes does not answer it. Call only after CanPrompt.

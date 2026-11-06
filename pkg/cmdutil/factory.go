@@ -398,6 +398,9 @@ func (f *Factory) isProductionTarget() bool {
 	return !sandboxSafeHost(host)
 }
 
+// IsProductionTarget reports whether the next API call may reach production; see isProductionTarget.
+func (f *Factory) IsProductionTarget() bool { return f.isProductionTarget() }
+
 // Target returns a "host (env)" summary of the next API call's destination.
 func (f *Factory) Target() string {
 	env := f.ActiveEnv()
@@ -407,6 +410,17 @@ func (f *Factory) Target() string {
 	return env
 }
 
+// ConfirmOut is where a confirm's warning, and what a command shows ahead of it, is written: the
+// prompt's own stream when a question will be asked (after the env line, so the warning stays next
+// to its question), stderr otherwise.
+func (f *Factory) ConfirmOut() io.Writer {
+	if f.Global.Yes || !f.canPrompt() {
+		return f.IOStreams.ErrOut
+	}
+	f.bannerBeforePrompt()
+	return f.promptOut()
+}
+
 // ConfirmProdWrite requires confirmation for a write on production; --yes skips the prompt, never OTP.
 func (f *Factory) ConfirmProdWrite(action string) error {
 	if !f.isProductionTarget() {
@@ -414,15 +428,9 @@ func (f *Factory) ConfirmProdWrite(action string) error {
 	}
 	// action may carry server or user text; an escape could rewrite the prompt.
 	action = jsonfmt.Clean(action)
-	warn := f.IOStreams.ErrOut
-	if !f.Global.Yes && f.canPrompt() {
-		// The env line comes first, so the warning stays next to its question.
-		f.bannerBeforePrompt()
-		warn = f.promptOut()
-	}
 	// Under --json or -o yaml stderr carries only the error object, and --yes already confirmed.
 	if f.Global.Output != "json" && f.Global.Output != "yaml" {
-		fmt.Fprintf(warn, "! live: %s targets PRODUCTION\n", action)
+		fmt.Fprintf(f.ConfirmOut(), "! live: %s targets PRODUCTION\n", action)
 	}
 	ok, err := f.Confirm(fmt.Sprintf("%s on production?", action))
 	if err != nil {
