@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/github/license/sepayvn/sepay-cli)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sepayvn/sepay-cli/badge)](https://scorecard.dev/viewer/?uri=github.com/sepayvn/sepay-cli)
 
-SePay is a Vietnamese payment platform: it watches a business's bank accounts and reports incoming money in near real time, with a hosted checkout, Bank Hub and e-invoicing around it.
+SePay is a leading Open Banking infrastructure company in Vietnam, providing bank APIs and cash-flow automation for businesses, from collecting payments and reconciliation to notifications and e-invoicing.
 Create an account at [my.sepay.vn/register](https://my.sepay.vn/register), then turn on [Test mode](https://developer.sepay.vn/en/tien-ich-khac/test-mode) (the sandbox) for your company.
 The sandbox is free and never touches real money.
 
@@ -28,7 +28,7 @@ sepay <command> <subcommand> [flags]
 | Scoop (Windows) | `scoop bucket add sepay https://github.com/sepayvn/scoop-sepay-cli`, then `scoop install sepay/sepay` |
 | Script (macOS, Linux) | `curl -fsSL https://get.sepay.vn/sepay-cli-install.sh \| sh` |
 | npm | `npm i -g sepay-cli` |
-| Go (requires Go 1.27.3+) | `go install github.com/sepayvn/sepay-cli/cmd/sepay@latest` |
+| Go | `go install github.com/sepayvn/sepay-cli/cmd/sepay@latest` |
 | Manual download | per-platform archives on [GitHub Releases](https://github.com/sepayvn/sepay-cli/releases) |
 
 The install script verifies the archive's SHA-256 against `checksums.txt`, and the cosign signature

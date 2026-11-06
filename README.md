@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/github/license/sepayvn/sepay-cli)](LICENSE)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/sepayvn/sepay-cli/badge)](https://scorecard.dev/viewer/?uri=github.com/sepayvn/sepay-cli)
 
-SePay là nền tảng thanh toán của Việt Nam: theo dõi tài khoản ngân hàng của doanh nghiệp và báo tiền vào gần như tức thời, kèm cổng thanh toán, Bank Hub và hóa đơn điện tử.
+SePay là công ty hạ tầng Open Banking hàng đầu tại Việt Nam, cung cấp API ngân hàng và tự động hoá dòng tiền cho doanh nghiệp, từ thu tiền, đối soát, thông báo đến xuất hoá đơn.
 Tạo tài khoản tại [my.sepay.vn/register](https://my.sepay.vn/register), rồi bật [Test mode](https://developer.sepay.vn/vi/tien-ich-khac/test-mode) (sandbox) cho công ty.
 Sandbox miễn phí và không đụng đến tiền thật.
 
@@ -28,8 +28,8 @@ sepay <command> <subcommand> [flags]
 | Scoop (Windows) | `scoop bucket add sepay https://github.com/sepayvn/scoop-sepay-cli` rồi `scoop install sepay/sepay` |
 | Script (macOS, Linux) | `curl -fsSL https://get.sepay.vn/sepay-cli-install.sh \| sh` |
 | npm | `npm i -g sepay-cli` |
-| Go (cần Go 1.27.3+) | `go install github.com/sepayvn/sepay-cli/cmd/sepay@latest` |
-| Tải tay | archive cho từng nền tảng ở [GitHub Releases](https://github.com/sepayvn/sepay-cli/releases) |
+| Go | `go install github.com/sepayvn/sepay-cli/cmd/sepay@latest` |
+| Tải thủ công | archive cho từng nền tảng ở [GitHub Releases](https://github.com/sepayvn/sepay-cli/releases) |
 
 Script cài đặt kiểm tra SHA-256 của archive với `checksums.txt`, và kiểm tra thêm chữ ký cosign
 của `checksums.txt` khi máy có `cosign`; `SEPAY_REQUIRE_SIGNATURE=1` từ chối cài khi không có
