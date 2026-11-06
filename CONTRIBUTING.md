@@ -1,8 +1,8 @@
 # Contributing to sepay-cli
 
-`sepay` is the open-source Go CLI for the SePay payment platform. Everyone taking part follows the
-[Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), not
-public issues.
+`sepay` is the open-source Go CLI for SePay, a leading Open Banking infrastructure company in
+Vietnam. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues
+go through [SECURITY.md](SECURITY.md), not public issues.
 
 ## Before you start
 

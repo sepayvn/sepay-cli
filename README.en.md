@@ -1,6 +1,6 @@
 [Tiếng Việt](README.md) · [English](README.en.md)
 
-# sepay
+# sepay-cli
 
 [![CI](https://github.com/sepayvn/sepay-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/sepayvn/sepay-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/sepayvn/sepay-cli)](https://github.com/sepayvn/sepay-cli/releases/latest)
