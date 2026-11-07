@@ -75,4 +75,6 @@ carries the meaning.**
 Per-platform archives and the signed `checksums.txt` are attached to each GitHub Release:
 <https://github.com/sepayvn/sepay-cli/releases>
 
+Documentation: <https://github.com/sepayvn/sepay-cli#readme>
+
 Apache-2.0 © Công ty CP SePay

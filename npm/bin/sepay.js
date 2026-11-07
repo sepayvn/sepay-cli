@@ -38,7 +38,7 @@ const SUPPORTED = [
   "win32-arm64",
 ];
 
-const DOCS = "https://developer.sepay.vn/en/agents/cli";
+const DOCS = "https://github.com/sepayvn/sepay-cli#readme";
 
 // Message style: English, no colour, lowercase right after
 // "Error:", detail lines indented two spaces, everything on stderr.
