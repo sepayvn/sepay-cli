@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.6](https://github.com/sepayvn/sepay-cli/compare/v0.1.5...v0.1.6) (2026-11-07)
+
+
+### Documentation
+
+* **npm:** edit README ([e059f4a](https://github.com/sepayvn/sepay-cli/commit/e059f4a154ef87e7e10bb5f986d353a9f806a6b0))
+* **npm:** edit README ([10a84f1](https://github.com/sepayvn/sepay-cli/commit/10a84f1b26bb44a1f8fb8ed2e6f3242a82e3270c))
+
 ## [0.1.5](https://github.com/sepayvn/sepay-cli/compare/v0.1.4...v0.1.5) (2026-11-07)
 
 
