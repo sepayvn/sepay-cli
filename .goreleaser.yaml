@@ -28,6 +28,26 @@ builds:
       - -X github.com/sepayvn/sepay-cli/internal/build.Commit={{ .ShortCommit }}
       - -X github.com/sepayvn/sepay-cli/internal/build.Date={{ .CommitDate }}
 
+# Developer ID signing + Apple notarization of the darwin binaries (quill, runs on Linux).
+# Runs after the build and before the archives, so checksums.txt, the cosign signature and
+# the npm packages all carry the signed binaries. Without the secrets (ci.yml snapshot, a fork,
+# a local run) it is skipped and the build is unchanged; release.yml then warns and ships
+# them unsigned. A signed darwin binary embeds Apple's timestamp, so the darwin archives no
+# longer rebuild to the same checksum; linux and windows still do.
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids: [sepay]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
 archives:
   - id: sepay
     formats: [tar.gz]
@@ -142,13 +162,16 @@ homebrew_casks:
       bash: completions/sepay.bash
       zsh: completions/_sepay
       fish: completions/sepay.fish
-    # The binary is not signed or notarized by Apple: without this, macOS refuses to run it.
+    # A signed and notarized binary (see `notarize`) passes Gatekeeper as installed. Only a
+    # build made without the signing secrets clears quarantine, or macOS refuses to run it.
     hooks:
       post:
         install_steps: |
+          {{- if not (isEnvSet "MACOS_SIGN_P12") }}
           on_macos do
             run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/sepay"]
           end
+          {{- end }}
 
 scoops:
   - name: sepay

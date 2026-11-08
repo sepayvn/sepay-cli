@@ -38,7 +38,14 @@ Everything happens on GitHub; nobody builds or publishes from a laptop.
    prerelease: a private repository's downloads would 404 from the cask and manifest. The push uses a
    GitHub App token minted in `release.yml` (variable `RELEASER_APP_CLIENT_ID`, secret
    `RELEASER_APP_PRIVATE_KEY`; the App is installed on those two repositories only).
-6. A broken version is never unpublished: fix forward with a new version, and mark the bad one
+6. The darwin binaries are signed with a Developer ID certificate and notarized by Apple (quill,
+   `notarize` in `.goreleaser.yaml`) when the `release` environment holds five secrets:
+   `MACOS_SIGN_P12` (the .p12, base64), `MACOS_SIGN_PASSWORD`, `MACOS_NOTARY_KEY` (the App Store
+   Connect API key .p8, base64), `MACOS_NOTARY_KEY_ID` and `MACOS_NOTARY_ISSUER_ID`. With none of
+   them the release still ships, with a warning, unsigned as before, and the cask keeps clearing
+   quarantine; with only some of them the job stops before building. A signed binary carries
+   Apple's timestamp, so the darwin archives do not rebuild to the same checksum; linux and windows do.
+7. A broken version is never unpublished: fix forward with a new version, and mark the bad one
    `npm deprecate sepay-cli@X.Y.Z "use X.Y.Z+1"`.
 
 ## First-time setup (once per package)

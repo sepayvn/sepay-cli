@@ -119,6 +119,27 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: homebrew-sepay-cli,scoop-sepay-cli
           permission-contents: write
+      # None of these: the `notarize` step of .goreleaser.yaml is skipped and the darwin binaries
+      # ship unsigned, as up to 0.1.6 (the cask then keeps its quarantine hook). Some but not all:
+      # quill would sign with an empty value and fail after the build, so stop before it.
+      - name: macOS signing secrets
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          missing="" n=0
+          for v in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+            [ -n "${!v}" ] || { missing="$missing $v"; n=$((n + 1)); }
+          done
+          case $n in
+            0) ;;
+            5) echo "::warning::no MACOS_* secrets in the release environment: the darwin binaries ship unsigned and not notarized" ;;
+            *) echo "::error::missing from the release environment:$missing (set all five, or none to ship unsigned)"
+               exit 1 ;;
+          esac
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           version: "v2.19.0"
@@ -129,6 +150,13 @@ jobs:
           TAP_GITHUB_TOKEN: ${{ steps.tap-token.outputs.token }}
           # The release notes name `gh attestation verify` only when the step below runs.
           REPO_PRIVATE: ${{ github.event.repository.private }}
+          # Developer ID certificate (.p12, base64) and App Store Connect API key (.p8, base64)
+          # for the `notarize` step; environment secrets of `release`.
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
 
       # SLSA build provenance: `gh attestation verify <file> -R sepayvn/sepay-cli` proves the
       # file was built by this workflow from this repository, independently of cosign.
