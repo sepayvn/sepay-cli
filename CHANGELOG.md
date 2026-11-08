@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/sepayvn/sepay-cli/compare/v0.1.6...v0.1.7) (2026-11-08)
+
+
+### Bug Fixes
+
+* **release:** sign and notarize macOS binaries ([b6454de](https://github.com/sepayvn/sepay-cli/commit/b6454de13ccfd3b6673744b0e701d9703b660519))
+
 ## [0.1.6](https://github.com/sepayvn/sepay-cli/compare/v0.1.5...v0.1.6) (2026-11-07)
 
 
