@@ -1,0 +1,10 @@
+# The default rules, plus one line of docs/RELEASING.md that names secrets without holding any.
+# It reached GitHub history in the 0.1.7 export before its inline gitleaks:allow, and history is
+# never rewritten, so every full `gitleaks git` scan would flag it again.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "docs/RELEASING.md: the sentence that names the five macOS signing secrets"
+regexTarget = "line"
+regexes = ['''`notarize` in `\.goreleaser\.yaml`\) when the `release` environment holds five secrets:''']
