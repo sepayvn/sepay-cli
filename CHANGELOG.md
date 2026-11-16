@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.1.8](https://github.com/sepayvn/sepay-cli/compare/v0.1.7...v0.1.8) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* **webhook:** a production write runs only with --env production on the command line (default_env no longer counts), and --yes confirms it only when the command names the resource; exit code 7 (otp_required) is gone.
+
+### Features
+
+* add --dry-run to production writes ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **auth:** confirm auth revoke --all and logout --all only on a terminal ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* color statuses and fit pg and einvoice reads to the terminal ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **einvoice:** read e-invoices on production, filter lists and show the original invoice ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **install:** add a PowerShell installer for Windows ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **install:** install.sh puts its directory on PATH on macOS and Linux, opt out with --no-modify-path ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **pg:** read payment gateway orders with pg order list and get, on production and sandbox ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **quota:** show the e-invoice quota in sepay quota ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* tell the server when an AI agent runs the CLI ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **update:** add sepay update to replace a standalone binary ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+
+
+### Bug Fixes
+
+* **api:** mask credentials, query values and URL userinfo in sepay api confirmations ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* name the permission behind a missing read scope as the web page shows it ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **pg:** read the largest payment gateway amounts exactly ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+* **webhook:** send the CLI User-Agent to the webhook hub ([d15c355](https://github.com/sepayvn/sepay-cli/commit/d15c35587fc2d6b34a5eaa4d1a0bd53dee97f996))
+
+
+### Chores
+
+* **gitleaks:** allow the RELEASING.md line that names the signing secrets ([c2063e2](https://github.com/sepayvn/sepay-cli/commit/c2063e233267731e5c7013d7ed67b11f0f65ab34))
+
 ## [0.1.7](https://github.com/sepayvn/sepay-cli/compare/v0.1.6...v0.1.7) (2026-11-08)
 
 
