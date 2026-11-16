@@ -37,6 +37,29 @@ deprecated, then prints one line to stderr after the command. It is off when `CI
 stderr is not a terminal, with `--json`, `-o yaml` or `--quiet`, and in a dev build. The answer is
 cached in `update-state.json` in the config directory.
 
+## AI agent
+
+Every request to a SePay host carries `User-Agent: sepay-cli/<version> (<os>; <arch>)`. When an
+AI agent launched the CLI, it ends with ` AI-Agent/<name>`, so the company's activity log on
+my.sepay.vn can show which writes an agent ran. The first variable set decides:
+
+| Variable | Name sent |
+|---|---|
+| `AI_AGENT` | its value |
+| `CLAUDECODE` | `claude-code` |
+| `GEMINI_CLI` | `gemini-cli` |
+| `CODEX_SANDBOX`, `CODEX_CI` | `codex` |
+| `CURSOR_AGENT` | `cursor` |
+| `COPILOT_AGENT` | `copilot` |
+| `CLINE_ACTIVE` | `cline` |
+| `AGENT` | its value |
+
+These are on/off variables like the ones above. A value taken from `AI_AGENT` or `AGENT` is
+lowercased and keeps only `a-z`, `0-9`, `.`, `_` and `-`, up to 32 characters. Claude Code sets
+both `AI_AGENT=claude-code_<version>_agent` and `CLAUDECODE=1`, so that `AI_AGENT` value is sent; the
+activity log shows it as Claude Code. The name only labels log entries; it never grants or blocks
+anything.
+
 ## Hosts
 
 | Variable | Host |
@@ -73,7 +96,9 @@ host "10.0.0.5"; use https
 ## Which environment is active
 
 Sandbox and production hold separate data. `--env` overrides the stored default, and
-`sepay config set default_env production` asks for confirmation before it changes it.
+`sepay config set default_env production` asks for confirmation before it changes it. A write
+to production runs only with `--env production` on its command line; the stored default does
+not count for it.
 
 - `sepay --map=json` reports `active_env`; use it in scripts.
 - Commands print `env: <env>` to stderr before their first prompt or request, except with

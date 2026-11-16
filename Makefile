@@ -49,7 +49,7 @@ install: build ## install bin/sepay and bash completion for this user
 # Secret scan of the working tree, run before anything is pushed to GitHub. CI scans
 # the full history with the same version.
 leaks: ## scan the working tree for secrets
-	go tool -modfile=tools/go.mod gitleaks dir . --redact
+	go tool gitleaks dir . --redact
 
 # The checks CI runs, with the same flags (.github/workflows/ci.yml lint and test jobs).
 fmt: ## fail if a Go file needs gofumpt
@@ -59,12 +59,11 @@ fmt: ## fail if a Go file needs gofumpt
 vet: ## go vet
 	go vet ./...
 
-tidy-check: ## fail if go mod tidy would change go.mod, go.sum or tools/go.mod
+tidy-check: ## fail if go mod tidy would change go.mod or go.sum
 	go mod tidy -diff
-	go -C tools mod tidy -diff
 
 vuln: ## govulncheck, same version as CI
-	go tool -modfile=tools/go.mod govulncheck ./...
+	go tool govulncheck ./...
 
 lint: ## golangci-lint, same version as CI
 	$(GOLANGCI_LINT) run

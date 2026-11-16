@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -182,7 +181,18 @@ func TestCheckDeprecatedWithoutNewer(t *testing.T) {
 
 	got, err := checker(srv, t.TempDir(), &now).Check(context.Background(), "0.2.0")
 	require.NoError(t, err)
-	assert.Equal(t, Result{Deprecated: "withdrawn, use 0.1.0"}, got, "never suggests a downgrade as a new release")
+	assert.Equal(t, Result{Deprecated: "withdrawn, use 0.1.0", Recommended: "0.1.0"}, got, "never suggests a downgrade as a new release")
+}
+
+func TestCheckDeprecatedPrereleaseRecommendsNothing(t *testing.T) {
+	// While only prereleases exist, latest may be a placeholder no release backs.
+	hits := 0
+	srv := registry(t, "0.1.0-rc.1", map[string]string{"0.2.0-rc.1": "broken"}, &hits)
+	now := time.Now()
+
+	got, err := checker(srv, t.TempDir(), &now).Check(context.Background(), "0.2.0-rc.1")
+	require.NoError(t, err)
+	assert.Equal(t, Result{Deprecated: "broken"}, got)
 }
 
 func TestCheckUnpublishedVersion(t *testing.T) {
@@ -269,6 +279,22 @@ func TestNotice(t *testing.T) {
 	assert.NotContains(t, withdrawn, "github.com")
 }
 
+// A standalone binary's notice must name a command that leaves the deprecated release: a bare
+// "sepay update" installs only a newer one and would report the withdrawn build as up to date.
+func TestNotice_DeprecatedStandaloneNamesTheVersionToGoBackTo(t *testing.T) {
+	const exe = "/home/u/.local/bin/sepay"
+
+	withdrawn := Notice("0.2.0", Result{Deprecated: "withdrawn, use 0.1.0", Recommended: "0.1.0"}, exe)
+	assert.Contains(t, withdrawn, "To upgrade: sepay update --version 0.1.0\n")
+
+	newer := Notice("0.2.0", Result{Latest: "0.2.1", Deprecated: "fixed in 0.2.1"}, exe)
+	assert.Contains(t, newer, "To upgrade: sepay update\n")
+
+	prerelease := Notice("0.3.0-rc.1", Result{Deprecated: "broken"}, exe)
+	assert.Contains(t, prerelease, "Warning: sepay-cli 0.3.0-rc.1 is deprecated: broken")
+	assert.NotContains(t, prerelease, "To upgrade", "no command reaches a newer build of its prerelease line")
+}
+
 // While only prereleases exist, latest is a placeholder with no sepay command.
 func TestNotice_DeprecatedPrereleaseStaysOnItsChannel(t *testing.T) {
 	const npmExe = "/home/u/.npm-global/lib/node_modules/@sepayjsc/cli-linux-x64/bin/sepay"
@@ -289,31 +315,37 @@ func TestNotice_DeprecatedPrereleaseStaysOnItsChannel(t *testing.T) {
 }
 
 func TestNotice_UpgradeCommandFollowsTheInstallChannel(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the install.sh rows are Unix paths")
-	}
-	t.Setenv("HOME", "/home/u")
 	cases := []struct {
 		name, exe   string
 		goInstalled bool
+		channel     Channel
 		want        string
 	}{
-		{"npm", "/home/u/.npm-global/lib/node_modules/@sepayjsc/cli-linux-x64/bin/sepay", false, "npm install -g sepay-cli@latest"},
-		{"homebrew cask", "/opt/homebrew/Caskroom/sepay/0.1.0/sepay", false, "brew upgrade sepay"},
-		{"homebrew cellar", "/home/linuxbrew/.linuxbrew/Cellar/sepay/0.1.0/bin/sepay", false, "brew upgrade sepay"},
-		{"scoop", `C:/Users/u/scoop/apps/sepay/current/sepay.exe`, false, "scoop update sepay"},
-		{"go install", "/home/u/go/bin/sepay", true, "go install github.com/sepayvn/sepay-cli/cmd/sepay@latest"},
-		{"install.sh default dir", "/home/u/.local/bin/sepay", false, "curl -fsSL https://get.sepay.vn/sepay-cli-install.sh | sh"},
-		{"install.sh other dir", "/usr/local/bin/sepay", false, "curl -fsSL https://get.sepay.vn/sepay-cli-install.sh | SEPAY_INSTALL_DIR=/usr/local/bin sh"},
-		{"dir that needs quoting", "/home/u/my tools/it's/sepay", false, `SEPAY_INSTALL_DIR='/home/u/my tools/it'\''s' sh`},
+		{"npm", "/home/u/.npm-global/lib/node_modules/@sepayjsc/cli-linux-x64/bin/sepay", false, ChannelNPM, "npm install -g sepay-cli@latest  (in a project: npm install -D sepay-cli@latest)"},
+		{"homebrew cask", "/opt/homebrew/Caskroom/sepay/0.1.0/sepay", false, ChannelHomebrew, "brew upgrade sepay"},
+		{"homebrew cellar", "/home/linuxbrew/.linuxbrew/Cellar/sepay/0.1.0/bin/sepay", false, ChannelHomebrew, "brew upgrade sepay"},
+		{"scoop", `C:/Users/u/Scoop/apps/sepay/current/sepay.exe`, false, ChannelScoop, "scoop update sepay"},
+		{"go install", "/home/u/go/bin/sepay", true, ChannelGo, "go install github.com/sepayvn/sepay-cli/cmd/sepay@latest"},
+		{"install.sh", "/home/u/.local/bin/sepay", false, ChannelStandalone, "sepay update"},
+		{"archive unpacked by hand", "/usr/local/bin/sepay", false, ChannelStandalone, "sepay update"},
+		{"install.ps1", `C:/Users/u/AppData/Local/Programs/sepay/sepay.exe`, false, ChannelStandalone, "sepay update"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func(v bool) { build.FromGoInstall = v }(build.FromGoInstall)
 			build.FromGoInstall = tc.goInstalled
+			assert.Equal(t, tc.channel, DetectChannel(tc.exe))
 			got := Notice("0.1.0", Result{Latest: "0.2.0"}, tc.exe)
-			assert.Contains(t, got, "To upgrade: ")
-			assert.Contains(t, got, tc.want)
+			assert.Contains(t, got, "To upgrade: "+tc.want+"\n")
 		})
 	}
+}
+
+func TestNewer(t *testing.T) {
+	assert.True(t, Newer("0.2.0", "0.1.9"))
+	assert.False(t, Newer("0.1.9", "0.2.0"))
+	assert.False(t, Newer("0.2.0", "0.2.0"))
+	assert.False(t, Newer("0.2.0", "dev"), "a build without a version is never compared")
+	assert.False(t, ValidVersion("v0.2.0"), "the tag's v is not part of the version")
+	assert.True(t, ValidVersion("0.2.0-rc.1"))
 }

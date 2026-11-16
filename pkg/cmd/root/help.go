@@ -84,10 +84,14 @@ var baseGuidance = []string{
 
 const moreGuidance = "More: sepay help glossary | exit-codes | errors; sepay --map=paths lists every command."
 
-// envLine states the resolved environment: --env and default_env silently rebase every command.
-func envLine(f *cmdutil.Factory) string {
+// envLine states the resolved environment: --env and default_env silently rebase every command. A
+// production write leaves out the hint to add --env production: only the user adds it.
+func envLine(f *cmdutil.Factory, prodWrite bool) string {
 	if f.ActiveEnv() == config.EnvProduction {
 		return "Active env: PRODUCTION (real money). Use --env sandbox for the test environment."
+	}
+	if prodWrite {
+		return "Active env: sandbox (no real money)."
 	}
 	return "Active env: sandbox (no real money). Use --env production for the live environment."
 }
@@ -101,7 +105,8 @@ func authLine(f *cmdutil.Factory) string {
 }
 
 func agentGuidance(cmd *cobra.Command, f *cmdutil.Factory) string {
-	lines := []string{envLine(f)}
+	prodConfirm := cmdutil.ConfirmsIn(cmd, config.EnvProduction) == cmdutil.ConfirmsTerminal
+	lines := []string{envLine(f, prodConfirm)}
 	if auth := authLine(f); auth != "" {
 		lines = append(lines, auth)
 	}
@@ -115,25 +120,32 @@ func agentGuidance(cmd *cobra.Command, f *cmdutil.Factory) string {
 		lines = append(lines, "Sandbox-only: this does not work on production.")
 	}
 	if scope := cmdutil.Annotation(cmd, cmdutil.AnnScope); scope != "" {
-		lines = append(lines, fmt.Sprintf("On production this needs the %q scope: sepay auth refresh --scopes %s", scope, scope))
+		lines = append(lines, fmt.Sprintf("On production this needs the %q scope, granted at `sepay login`.", scope))
 	}
 	if cmdutil.Annotation(cmd, cmdutil.AnnDestructive) == "irreversible" {
 		lines = append(lines, "Irreversible: there is no command that undoes this. Confirm the target before running it.")
 	}
-	switch cmdutil.Annotation(cmd, cmdutil.AnnConfirms) {
+	switch cmdutil.ConfirmsIn(cmd, config.EnvSandbox) {
 	case "always":
-		lines = append(lines, "Prompts in sandbox too. Without a terminal it exits 2 until you pass --yes.")
+		if prodConfirm {
+			lines = append(lines, "Prompts in sandbox too; there, without a terminal it exits 2 until you pass --yes.")
+		} else {
+			lines = append(lines, "Prompts in sandbox too. Without a terminal it exits 2 until you pass --yes.")
+		}
 	case "conditional":
 		lines = append(lines, "Some invocations prompt (see the note above). Without a terminal those exit 2 until you pass --yes.")
 	}
-	// Outermost first: a group's note and its subcommand's are different facts.
+	if prodConfirm {
+		lines = append(lines, "On production a write runs only with --env production on the command line (default_env does not count), and --yes confirms it only when the command names the resource it changes. Otherwise it exits 2: ask the user to run it in their own terminal. Do not add --env production or --yes to a write on the user's behalf.")
+	}
+	// Outermost first; withoutRepeats drops a subcommand note its group's note already carries.
 	var notes []string
 	for c := cmd; c != nil; c = c.Parent() {
 		if extra := c.Annotations[cmdutil.AnnGuidance]; extra != "" {
 			notes = append([]string{extra}, notes...)
 		}
 	}
-	lines = append(lines, notes...)
+	lines = append(lines, withoutRepeats(notes)...)
 
 	var b strings.Builder
 	b.WriteString("\n\n[Agent guidance]")
@@ -142,4 +154,23 @@ func agentGuidance(cmd *cobra.Command, f *cmdutil.Factory) string {
 		b.WriteString(l)
 	}
 	return b.String()
+}
+
+// withoutRepeats drops a note another note already carries word for word, keeping the first of
+// two equal notes: a subcommand can repeat a sentence of its group's note.
+func withoutRepeats(notes []string) []string {
+	kept := make([]string, 0, len(notes))
+	for i, n := range notes {
+		repeated := false
+		for j, o := range notes {
+			if strings.Contains(o, n) && (len(o) > len(n) || j < i) {
+				repeated = true
+				break
+			}
+		}
+		if !repeated {
+			kept = append(kept, n)
+		}
+	}
+	return kept
 }

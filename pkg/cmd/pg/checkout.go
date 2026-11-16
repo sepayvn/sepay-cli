@@ -110,7 +110,7 @@ func newCheckoutInitCmd(f *cmdutil.Factory) *cobra.Command {
 	fl.StringVar(&opts.amount, "amount", "", "Order amount (required)")
 	fl.StringVar(&opts.description, "description", "", "Order description (required)")
 	fl.StringVar(&opts.paymentMethod, "payment-method", "", "BANK_TRANSFER|CARD|NAPAS_BANK_TRANSFER (optional)")
-	fl.StringVar(&opts.invoice, "invoice", "", "Order invoice number: letters, digits, - and _ (required for PURCHASE)")
+	fl.StringVar(&opts.invoice, "invoice", "", "Order code: letters, digits, - and _ (required for PURCHASE)")
 	fl.StringVar(&opts.operation, "operation", "PURCHASE", "PURCHASE|VERIFY")
 	fl.StringVar(&opts.currency, "currency", "VND", "Currency")
 	fl.StringVar(&opts.successURL, "success-url", "", "Redirect URL on success")
@@ -146,7 +146,7 @@ func runCheckoutInit(ctx context.Context, f *cmdutil.Factory, opts *checkoutOpti
 		return err
 	}
 	if opts.operation == "PURCHASE" {
-		if opts.invoice, err = f.InputOrFlag(opts.invoice, "invoice", "Order invoice number"); err != nil {
+		if opts.invoice, err = f.InputOrFlag(opts.invoice, "invoice", "Order code"); err != nil {
 			return err
 		}
 	}

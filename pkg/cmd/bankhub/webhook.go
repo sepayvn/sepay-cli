@@ -88,7 +88,7 @@ Prompted for on a terminal; required otherwise.`,
 }
 
 func runWebhookSet(ctx context.Context, f *cmdutil.Factory, body map[string]any) error {
-	if err := f.ConfirmMutation("set the merchant webhook", true); err != nil {
+	if err := f.ConfirmMutation("set the merchant webhook", "", true); err != nil {
 		return err
 	}
 	client, err := f.NewBankHubClient()

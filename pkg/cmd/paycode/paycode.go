@@ -121,6 +121,14 @@ mistyped switch.`,
 			if enable && disable {
 				return &cmdutil.FlagError{Err: errors.New("cannot use --enable and --disable together")}
 			}
+			// --enable/--disable turn detection on or off for the whole company, which no structure names.
+			named := structure
+			if enable || disable {
+				named = ""
+			}
+			if err := f.CheckProdWrite("update pay code", named); err != nil {
+				return err
+			}
 			if characterType != "" {
 				if err := checkCharacterType(characterType); err != nil {
 					return err
@@ -145,7 +153,7 @@ mistyped switch.`,
 				return &cmdutil.FlagError{Err: errors.New("a pay code prefix is required")}
 			}
 
-			opts := updateOptions{prefix: given, interactive: interactive, structure: structure, characterType: characterType}
+			opts := updateOptions{prefix: given, interactive: interactive, structure: structure, target: named, characterType: characterType}
 			if cmd.Flags().Changed("active") {
 				opts.active = onOff(active)
 			}
@@ -174,9 +182,11 @@ mistyped switch.`,
 	fl.BoolVar(&disable, "disable", false, "Turn pay code detection off")
 	fl.StringVar(&structure, "structure", "", "Prefix of the structure to edit (default: ask on a terminal, else the first active one)")
 	fl.StringVar(&prefixFlag, "prefix", "", "Pay code prefix (2-5 letters), same as the argument; use it when the prefix reads as switch syntax (on|off|yes|no|true|false)")
+	cmdutil.AddDryRunFlag(cmd, f)
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnValueFlag: "prefix",
 		cmdutil.AnnScope:     "paycode:write",
+		cmdutil.AnnConfirms:  "production=terminal",
 		cmdutil.AnnGuidance:  "On production this changes reconciliation matching immediately; transfers in flight with the old prefix stop matching.",
 	})
 }
@@ -248,6 +258,7 @@ type updateOptions struct {
 	// interactive is a bare update on a terminal: it asks which fields to change.
 	interactive   bool
 	structure     string
+	target        string // what --yes may confirm on production: --structure, or "" for a toggle
 	suffixFrom    *int
 	suffixTo      *int
 	characterType string
@@ -337,8 +348,22 @@ func runUpdate(ctx context.Context, f *cmdutil.Factory, opts updateOptions) erro
 
 	// No idempotency key: If-Match refuses a stale write, and the client does not resend a conditional
 	// write whose outcome it never learned (a landed one would come back as 409).
-	if err := f.ConfirmProdWrite("update pay code"); err != nil {
+	if err := f.ConfirmProdWrite("update pay code", opts.target); err != nil {
 		return err
+	}
+	if f.Global.DryRun {
+		// The server answers with a new version, so after carries none and the table compares without it.
+		req := cmdutil.DryRunRequest{Method: http.MethodPut, Path: "/company/paycode", Body: body}
+		if version != "" {
+			req.Headers = []string{"If-Match"}
+		}
+		unversioned := cur
+		unversioned.Version = ""
+		return f.RenderDryRun(cmdutil.DryRun{
+			Request: req,
+			Before:  cur,
+			After:   body,
+		}, func() error { return f.RenderChanges(unversioned, body) })
 	}
 	write := api.WriteOptions{Body: body}
 	if version != "" {
@@ -475,6 +500,9 @@ case, is refused.`,
   sepay paycode create DH --character-type NumberOnly --suffix-from 4 --suffix-to 8 --active`,
 		Args: cmdutil.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := f.CheckProdWrite("create pay code structure", ""); err != nil {
+				return err
+			}
 			if f.CanPrompt() {
 				// A bad flag fails before any question is asked.
 				if cmd.Flags().Changed("character-type") {
@@ -535,9 +563,11 @@ case, is refused.`,
 	fl.StringVar(&characterType, "character-type", "", "NumberOnly|NumberAndLetter")
 	fl.BoolVar(&active, "active", false, "Turn the structure on (--active) or off (--active=false)")
 	cmdutil.MarkRequired(cmd, "suffix-from", "suffix-to", "character-type", "active")
+	cmdutil.AddDryRunFlag(cmd, f)
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnValueFlag: "prefix",
 		cmdutil.AnnScope:     "paycode:write",
+		cmdutil.AnnConfirms:  "production=terminal",
 		cmdutil.AnnGuidance:  "On production an active structure starts matching transfers immediately.",
 	})
 }
@@ -612,8 +642,14 @@ func runCreate(ctx context.Context, f *cmdutil.Factory, st Structure) error {
 	if err != nil {
 		return err
 	}
-	if err := f.ConfirmProdWrite("create pay code structure " + st.Prefix); err != nil {
+	if err := f.ConfirmProdWrite("create pay code structure "+st.Prefix, ""); err != nil {
 		return err
+	}
+	if f.Global.DryRun {
+		return f.RenderDryRun(cmdutil.DryRun{
+			Request: cmdutil.DryRunRequest{Method: http.MethodPost, Path: "/company/paycode", Body: st},
+			After:   st,
+		}, func() error { return f.RenderFields(st) })
 	}
 	env, err := client.Post(ctx, "/company/paycode", api.WriteOptions{Body: st, IdempotencyKey: key})
 	if err != nil {
@@ -672,7 +708,7 @@ func pickStructure(f *cmdutil.Factory, structures []Structure, opts updateOption
 
 // mergePaycode applies opts onto structure i, keeping the others; seeds one from defaults when empty.
 func mergePaycode(cur Paycode, opts updateOptions, i int) Paycode {
-	structures := cur.Structures
+	structures := slices.Clone(cur.Structures)
 	if len(structures) == 0 {
 		structures = []Structure{{IsActive: "on", Prefix: opts.prefix, SuffixFrom: 3, SuffixTo: 10, CharacterType: "NumberOnly"}}
 		i = 0

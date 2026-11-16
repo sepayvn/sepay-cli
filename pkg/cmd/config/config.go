@@ -130,9 +130,15 @@ value ("") clears the setting.`,
 				return &cmdutil.FlagError{Err: fmt.Errorf("default_env must be %s or %s", config.EnvSandbox, config.EnvProduction)}
 			}
 			// A production default silently moves every later command onto real money.
+			// A local setting, not an API write: the production-write gate does not apply to it.
 			if key == "default_env" && value == config.EnvProduction {
-				if err := f.ConfirmMutation("make production the default environment for every command", true); err != nil {
+				const action = "make production the default environment for every command"
+				ok, err := f.Confirm(action + "?")
+				if err != nil {
 					return err
+				}
+				if !ok {
+					return &cmdutil.FlagError{Err: fmt.Errorf("%s cancelled", action)}
 				}
 			}
 			cfg.Set(key, value)

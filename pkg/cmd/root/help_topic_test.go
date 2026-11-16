@@ -101,7 +101,7 @@ func TestHelpTopic_ExitCodesCoverEveryCode(t *testing.T) {
 	body := topicBody(t, "exit-codes")
 	for _, code := range []cmdutil.ExitCode{
 		cmdutil.ExitOK, cmdutil.ExitError, cmdutil.ExitUsage, cmdutil.ExitNotImplemented, cmdutil.ExitAuth,
-		cmdutil.ExitScope, cmdutil.ExitForward, cmdutil.ExitOTP, cmdutil.ExitBlocked, cmdutil.ExitInterrupted,
+		cmdutil.ExitScope, cmdutil.ExitForward, cmdutil.ExitBlocked, cmdutil.ExitInterrupted,
 	} {
 		assert.Contains(t, body, fmt.Sprintf("| %d |", code))
 	}
@@ -112,4 +112,16 @@ func TestHelpTopic_GlossaryDefinesTheOpaqueNouns(t *testing.T) {
 	for _, term := range []string{"paycode", "VA (virtual account)", "quota", "bankhub", "settlement", "xid"} {
 		assert.Contains(t, body, term)
 	}
+}
+
+func TestHelpTopic_GlossaryQuotaCoversTheEinvoiceRow(t *testing.T) {
+	body := topicBody(t, "glossary")
+	assert.Contains(t, body, "the e-invoices issued to date")
+	assert.Contains(t, body, "There is no `einvoice` entry if your company has not bought an\n  e-invoice plan.")
+	// `unlimited` stays an enforcement value in the table below, never an einvoice state.
+	_, production, ok := strings.Cut(body, "- Production:")
+	require.True(t, ok)
+	production, _, ok = strings.Cut(production, "| `enforcement` |")
+	require.True(t, ok)
+	assert.NotContains(t, production, "unlimited")
 }

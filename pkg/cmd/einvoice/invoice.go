@@ -14,6 +14,7 @@ import (
 	"github.com/sepayvn/sepay-cli/internal/api"
 	iei "github.com/sepayvn/sepay-cli/internal/einvoice"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
+	"github.com/sepayvn/sepay-cli/pkg/iostreams"
 	"github.com/sepayvn/sepay-cli/pkg/jsonfmt"
 
 	"github.com/spf13/cobra"
@@ -38,7 +39,16 @@ type invoice struct {
 	TotalAmount      api.FlexNum   `json:"total_amount" yaml:"total_amount"`
 	Notes            string        `json:"notes,omitempty" yaml:"notes,omitempty"`
 	Source           string        `json:"source,omitempty" yaml:"source,omitempty"`
+	OriginalInvoice  *original     `json:"original_invoice,omitempty" yaml:"original_invoice,omitempty"`
 	Items            []invoiceItem `json:"items,omitempty" yaml:"items,omitempty"`
+}
+
+// original is the invoice a replacement or an adjustment points to; any field may be null.
+type original struct {
+	ReferenceCode *string `json:"reference_code" yaml:"reference_code"`
+	InvoiceNumber *string `json:"invoice_number" yaml:"invoice_number"`
+	InvoiceSeries *string `json:"invoice_series" yaml:"invoice_series"`
+	IssuedDate    *string `json:"issued_date" yaml:"issued_date"`
 }
 
 type buyer struct {
@@ -64,14 +74,113 @@ type invoiceItem struct {
 	TaxAmount   api.FlexNum `json:"tax_amount" yaml:"tax_amount"`
 }
 
-func newInvoiceCmd(f *cmdutil.Factory) *cobra.Command {
+// invoiceScope is the scope production requires of invoice list and get on top of "read"; the sandbox
+// host does not check it. Help, --map and the exit-5 text name it.
+const invoiceScope = "einvoice:read"
+
+// invoicePermission names the permission that grants invoiceScope, as the user permission page of
+// my.sepay.vn shows it (group › box), so an admin can find the box to tick.
+const invoicePermission = "Hóa đơn điện tử (eInvoice) › Xem danh sách hóa đơn điện tử"
+
+// invoiceReadAnnotations mark the invoice reads as production-capable; the group's annotations
+// describe the sandbox-only commands.
+var invoiceReadAnnotations = map[string]string{
+	cmdutil.AnnEnvs:  "both",
+	cmdutil.AnnScope: invoiceScope,
+}
+
+// documentTypes names each document_type of the e-invoice API; JSON keeps the number.
+var documentTypes = map[int]string{
+	1: "Draft", 2: "New invoice", 3: "Cancelled", 4: "Replacement", 5: "Replaced",
+	6: "Increase adjustment", 7: "Decrease adjustment", 8: "Information adjustment",
+	9: "Increase/decrease adjustment", 10: "Adjusted",
+}
+
+// documentTypeHelp lists the document_type numbers --type takes with the names TYPE prints.
+func documentTypeHelp() string {
+	parts := make([]string, 0, len(documentTypes))
+	for n := 1; n <= len(documentTypes); n++ {
+		parts = append(parts, fmt.Sprintf("%d %s", n, documentTypes[n]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// documentTypeName names a document_type; an undocumented one prints as its number, a missing one
+// (0) as nothing.
+func documentTypeName(t int) string {
+	if name, ok := documentTypes[t]; ok {
+		return name
+	}
+	if t == 0 {
+		return ""
+	}
+	return strconv.Itoa(t)
+}
+
+// providerStatuses names the e-invoice provider's own processing status (provider_status).
+var providerStatuses = map[string]string{
+	"1": "Draft", "2": "Signing error", "3": "Not sent to tax authority",
+	"4": "Issued / Accepted by tax authority", "5": "Tax authority pending",
+	"6": "Not qualified for tax code issuance", "7": "[Form 04/SS] Declaration not created",
+	"8": "[Form 04/SS] Not accepted by tax authority", "9": "[Form 04/SS] Approved by tax authority",
+}
+
+// providerStatusName names a provider_status; an undocumented one prints as sent.
+func providerStatusName(s string) string {
+	if name, ok := providerStatuses[s]; ok {
+		return name
+	}
+	return s
+}
+
+// lineTypeNote is the line_type of a free-text note line, which carries no figures.
+const lineTypeNote = 4
+
+// lineTypes names every line_type but plain goods (1).
+var lineTypes = map[int]string{2: "promotion", 3: "discount", lineTypeNote: "note"}
+
+// taxRateText prints a line's tax rate, naming the two codes the e-invoice API uses instead of a
+// percentage: -2 (not subject to VAT) and -1 (not declared).
+func taxRateText(r api.FlexNum) string {
+	switch r {
+	case -2:
+		return "exempt"
+	case -1:
+		return "undeclared"
+	}
+	return r.String()
+}
+
+// invoiceStatusColor paints an invoice status: issued green, cancelled red, draft yellow.
+func invoiceStatusColor(ios *iostreams.IOStreams, status string) string {
+	switch status {
+	case "issued":
+		return ios.Green(status)
+	case "cancelled":
+		return ios.Red(status)
+	case "draft":
+		return ios.Yellow(status)
+	}
+	return status
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// newInvoiceCmd also returns the two commands that read production, for the einvoice env hook.
+func newInvoiceCmd(f *cmdutil.Factory) (*cobra.Command, map[*cobra.Command]bool) {
 	cmd := &cobra.Command{
 		Use:   "invoice <command>",
 		Short: "Invoices (create and issue are async: submit, then poll)",
 	}
+	list, get := newInvoiceListCmd(f), newInvoiceGetCmd(f)
 	cmd.AddCommand(
-		newInvoiceListCmd(f),
-		newInvoiceGetCmd(f),
+		list,
+		get,
 		newInvoiceCreateCmd(f),
 		newInvoiceCheckCmd(f, "create-status", "/v1/invoices/create/check/", "Poll a create submission to Success/Failed", "create"),
 		newInvoiceIssueCmd(f),
@@ -80,7 +189,7 @@ func newInvoiceCmd(f *cmdutil.Factory) *cobra.Command {
 		cmdutil.Stub(&cobra.Command{Use: "download <reference-code>", Short: "Download the invoice PDF/XML", Args: cobra.ExactArgs(1)}),
 		cmdutil.Stub(&cobra.Command{Use: "delete <reference-code>", Aliases: []string{"rm", "del"}, Short: "Delete a draft invoice", Args: cobra.ExactArgs(1)}),
 	)
-	return cmd
+	return cmd, map[*cobra.Command]bool{list: true, get: true}
 }
 
 // tracking is the async 202 response for create/issue.
@@ -132,7 +241,7 @@ func newInvoiceIssueCmd(f *cmdutil.Factory) *cobra.Command {
 		Long: `Issue a drafted invoice to the tax authority. This is asynchronous: the command
 submits it and prints a tracking code; "einvoice invoice issue-status" reports the result.
 
-<reference-code> is the REF column of "sepay einvoice invoice list". Prompted for on a terminal; required otherwise.`,
+<reference-code> is the REF column of "sepay einvoice invoice list" on sandbox. Prompted for on a terminal; required otherwise.`,
 		Example: `  sepay einvoice invoice issue <reference-code>
   # then poll the tracking code it prints
   sepay einvoice invoice issue-status <tracking-code>`,
@@ -154,7 +263,7 @@ submits it and prints a tracking code; "einvoice invoice issue-status" reports t
 // runInvoiceSubmit posts an async create/issue and prints the tracking code.
 // irreversible makes the confirm apply in sandbox too (issue goes to the tax authority).
 func runInvoiceSubmit(ctx context.Context, f *cmdutil.Factory, path string, body any, action, pollVerb string, irreversible bool) error {
-	if err := f.ConfirmMutation(action+" einvoice", irreversible); err != nil {
+	if err := f.ConfirmMutation(action+" einvoice", "", irreversible); err != nil {
 		return err
 	}
 	client, err := f.NewEInvoiceClient()
@@ -218,9 +327,9 @@ func runInvoiceCheck(ctx context.Context, f *cmdutil.Factory, path string) error
 		if failed && r.Message != "" {
 			f.Printf("Reason:  %s\n", r.Message)
 		}
-		if r.Invoice != nil && r.Invoice.InvoiceNumber != "" {
+		if r.Invoice != nil && fullNumber(r.Invoice.InvoiceSeries, r.Invoice.InvoiceNumber) != "" {
 			f.Printf("Number:  %s\nTotal:   %s\n",
-				r.Invoice.InvoiceNumber, jsonfmt.FormatMoney(float64(r.Invoice.TotalAmount)))
+				fullNumber(r.Invoice.InvoiceSeries, r.Invoice.InvoiceNumber), jsonfmt.FormatMoney(float64(r.Invoice.TotalAmount)))
 		}
 		return nil
 	}); err != nil {
@@ -263,30 +372,81 @@ func readInvoicePayload(f *cmdutil.Factory, arg string) (json.RawMessage, error)
 	return json.RawMessage(raw), nil
 }
 
-// invoiceSources are the only `source` values the server filters on; anything else returns an unfiltered page.
-var invoiceSources = []string{"manual", "api"}
+// getInvoice reads one invoice through API v2 with the user's token on both envs.
+func getInvoice(ctx context.Context, f *cmdutil.Factory, refSeg string) (invoice, error) {
+	client, err := f.NewAPIClient()
+	if err != nil {
+		return invoice{}, err
+	}
+	// The server's router urldecodes the path, which reads a bare "+" as a space.
+	env, err := client.Get(ctx, "/einvoice/invoices/"+strings.ReplaceAll(refSeg, "+", "%2B"), nil)
+	if err != nil {
+		return invoice{}, cmdutil.ReadScopeError(err, invoiceScope, invoicePermission)
+	}
+	return api.DataInto[invoice](env)
+}
+
+// invoiceSources and invoiceStatuses are what --source and --status take; the API refuses any other
+// value with a 422. --status leaves out pending, which the API also takes: the portal list hides
+// pending invoices, and leaving them out of an unfiltered list is up to the server.
+var (
+	invoiceSources  = []string{"manual", "api"}
+	invoiceStatuses = []string{"draft", "issued", "failed", "cancelled"}
+)
 
 func newInvoiceListCmd(f *cmdutil.Factory) *cobra.Command {
-	var source string
+	var source, status, from, to, search, docType string
 	var page, perPage int
-	cmd := &cobra.Command{
+	cmd := cmdutil.Annotate(&cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List invoices",
-		Long: `List invoices with their reference code, number, status and total. --source
-separates invoices made in the portal (manual) from those made through the API.
+		Long: `List invoices with their number, the invoice they replace or adjust, reference code,
+status and total. The filters work as on the portal page einvoice/documents and combine
+with AND: --source separates invoices made in the portal (manual) from those made through
+the API; --from and --to bound the invoice date, so an invoice with none is left out;
+--search looks in the series and number, reference code and the buyer's name, tax code,
+phone and email.
 
-The REF column is the <reference-code> "einvoice invoice get" and "issue" take.`,
-		Example: `  sepay einvoice invoice list --source api
-  sepay einvoice invoice list --page 2 --json`,
+The REF column is the <reference-code> "einvoice invoice get" takes; on sandbox, "issue" takes it too.`,
+		Example: `  sepay einvoice invoice list --from 2026-11-01 --to 2026-11-10 --status issued --search 1C26TAA
+  sepay einvoice invoice list --type 4
+  sepay einvoice invoice list --source api --page 2 --json`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := cmdutil.ValidateChoice(cmd, "source", invoiceSources); err != nil {
+			if err := cmdutil.ValidateChoices(cmd, map[string][]string{"source": invoiceSources, "status": invoiceStatuses}); err != nil {
 				return err
 			}
+			if err := cmdutil.ValidateDateOnly(cmd, "from", "to"); err != nil {
+				return err
+			}
+			if err := cmdutil.ValidateDateOrder(cmd, "from", "to"); err != nil {
+				return err
+			}
+			fs := cmd.Flags()
+			search = strings.TrimSpace(search)
+			if (fs.Changed("search") || fs.Changed("q")) && search == "" {
+				return &cmdutil.FlagError{Err: fmt.Errorf("--%s must not be empty", cmdutil.SpelledAs(cmd, "search"))}
+			}
+			if fs.Changed("type") {
+				n, err := strconv.Atoi(docType)
+				if err != nil || n < 1 || n > 10 {
+					return &cmdutil.FlagError{Err: fmt.Errorf("--type must be a number from 1 to 10")}
+				}
+				docType = strconv.Itoa(n)
+			}
 			query := url.Values{}
-			if source != "" {
-				query.Set("source", source)
+			for param, val := range map[string]string{
+				"source":           source,
+				"status":           status,
+				"from_issued_date": from,
+				"to_issued_date":   to,
+				"q":                search,
+				"document_type":    docType,
+			} {
+				if val != "" {
+					query.Set(param, val)
+				}
 			}
 			if page > 0 {
 				query.Set("page", strconv.Itoa(page))
@@ -296,24 +456,44 @@ The REF column is the <reference-code> "einvoice invoice get" and "issue" take.`
 			}
 			return runInvoiceList(cmd.Context(), f, query)
 		},
-	}
+	}, invoiceReadAnnotations)
 	fl := cmd.Flags()
 	fl.StringVar(&source, "source", "", "Filter by source: "+strings.Join(invoiceSources, "|"))
+	fl.StringVar(&from, "from", "", "Invoice date from (YYYY-MM-DD)")
+	fl.StringVar(&to, "to", "", "Invoice date to (YYYY-MM-DD)")
+	fl.StringVar(&status, "status", "", "Filter by status: "+strings.Join(invoiceStatuses, "|"))
+	fl.StringVar(&docType, "type", "", "Filter by invoice type: "+documentTypeHelp())
+	fl.StringVar(&search, "search", "", "Search the series and number, reference code and buyer details")
+	cmdutil.AliasFlag(fl, "q", "search")
 	fl.IntVar(&page, "page", 0, "Page number")
 	fl.IntVar(&perPage, "per-page", 0, "Rows per page (max 100)")
 	return cmd
 }
 
+// listInvoices reads one page through API v2 with the user's token on both envs: the e-invoice API
+// has no date, status or search filter.
+func listInvoices(ctx context.Context, f *cmdutil.Factory, query url.Values) ([]invoice, *iei.Paging, error) {
+	client, err := f.NewAPIClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	env, err := client.Get(ctx, "/einvoice/invoices", query)
+	if err != nil {
+		return nil, nil, cmdutil.ReadScopeError(err, invoiceScope, invoicePermission)
+	}
+	invoices, p, err := api.ListInto[invoice](env)
+	if err != nil {
+		return nil, nil, err
+	}
+	var paging *iei.Paging
+	if p != nil {
+		paging = &iei.Paging{Total: p.Total, CurrentPage: p.CurrentPage, PageCount: p.LastPage}
+	}
+	return invoices, paging, nil
+}
+
 func runInvoiceList(ctx context.Context, f *cmdutil.Factory, query url.Values) error {
-	client, err := f.NewEInvoiceClient()
-	if err != nil {
-		return err
-	}
-	resp, err := client.Get(ctx, "/v1/invoices", query)
-	if err != nil {
-		return err
-	}
-	invoices, paging, err := iei.ListInto[invoice](resp)
+	invoices, paging, err := listInvoices(ctx, f, query)
 	if err != nil {
 		return err
 	}
@@ -323,9 +503,17 @@ func runInvoiceList(ctx context.Context, f *cmdutil.Factory, query url.Values) e
 			fmt.Fprintln(f.IOStreams.ErrOut, "No invoices found.")
 			return nil
 		}
-		t := jsonfmt.NewTable("REF", "NUMBER", "STATUS", "ISSUED", "TOTAL")
+		t := jsonfmt.NewTable("NUMBER", "ORIGINAL", "REF", "TYPE", "STATUS", "ISSUED", "BUYER", "TOTAL").
+			Truncatable("BUYER").Droppable("ORIGINAL", "TYPE", "BUYER")
 		for _, in := range invoices {
-			t.AddRow(in.ReferenceCode, in.InvoiceNumber, in.Status, in.IssuedDate, jsonfmt.FormatMoney(float64(in.TotalAmount)))
+			buyerName := ""
+			if in.Buyer != nil {
+				buyerName = in.Buyer.Name
+			}
+			t.AddRow(jsonfmt.OrDash(fullNumber(in.InvoiceSeries, in.InvoiceNumber)), jsonfmt.OrDash(in.OriginalInvoice.number()),
+				in.ReferenceCode, documentTypeName(in.DocumentType),
+				invoiceStatusColor(f.IOStreams, in.Status), jsonfmt.OrDash(in.IssuedDate), jsonfmt.OrDash(buyerName),
+				jsonfmt.FormatMoney(float64(in.TotalAmount)))
 		}
 		if err := f.RenderTable(t); err != nil {
 			return err
@@ -336,7 +524,7 @@ func runInvoiceList(ctx context.Context, f *cmdutil.Factory, query url.Values) e
 }
 
 func newInvoiceGetCmd(f *cmdutil.Factory) *cobra.Command {
-	return &cobra.Command{
+	return cmdutil.Annotate(&cobra.Command{
 		Use:   "get <reference-code>",
 		Short: "Show an invoice and its line items",
 		Long: `Show an invoice and its line items.
@@ -350,7 +538,7 @@ func newInvoiceGetCmd(f *cmdutil.Factory) *cobra.Command {
 			}
 			return runInvoiceGet(cmd.Context(), f, ref)
 		},
-	}
+	}, invoiceReadAnnotations)
 }
 
 func runInvoiceGet(ctx context.Context, f *cmdutil.Factory, ref string) error {
@@ -358,48 +546,120 @@ func runInvoiceGet(ctx context.Context, f *cmdutil.Factory, ref string) error {
 	if err != nil {
 		return err
 	}
-	client, err := f.NewEInvoiceClient()
-	if err != nil {
-		return err
-	}
-	resp, err := client.Get(ctx, "/v1/invoices/"+refSeg, nil)
-	if err != nil {
-		return err
-	}
-	in, err := iei.DataInto[invoice](resp)
+	in, err := getInvoice(ctx, f, refSeg)
 	if err != nil {
 		return err
 	}
 
 	return f.RenderOutput(in, func() error {
-		out := f.IOStreams.Out
-		f.Printf("Ref:      %s\nNumber:   %s\nSeries:   %s\nStatus:   %s\nIssued:   %s\nPayment:  %s\n",
-			in.ReferenceCode, jsonfmt.OrDash(in.InvoiceNumber), jsonfmt.OrDash(in.InvoiceSeries),
-			in.Status, in.IssuedDate, jsonfmt.OrDash(in.PaymentMethod))
-		if in.Buyer != nil {
-			f.Printf("Buyer:    %s", in.Buyer.Name)
-			if in.Buyer.TaxCode != "" {
-				f.Printf(" (MST %s)", in.Buyer.TaxCode)
-			}
-			fmt.Fprintln(out)
-		}
-		f.Printf("Subtotal: %s\nTax:      %s\nTotal:    %s\n",
-			jsonfmt.FormatMoney(float64(in.TotalBeforeTax)), jsonfmt.FormatMoney(float64(in.TaxAmount)), jsonfmt.FormatMoney(float64(in.TotalAmount)))
-		if in.PdfURL != nil && *in.PdfURL != "" {
-			f.Printf("PDF:      %s\n", *in.PdfURL)
-		}
-		if in.XMLURL != nil && *in.XMLURL != "" {
-			f.Printf("XML:      %s\n", *in.XMLURL)
-		}
+		printInvoice(f, in)
 		if len(in.Items) == 0 {
 			return nil
 		}
-		fmt.Fprintln(out)
-		t := jsonfmt.NewTable("#", "ITEM", "QTY", "UNIT PRICE", "TAX%", "AMOUNT").Truncatable("ITEM")
+		fmt.Fprintln(f.IOStreams.Out)
+		t := jsonfmt.NewTable("#", "ITEM", "QTY", "UNIT PRICE", "TAX%", "AMOUNT").Truncatable("ITEM").KeepsTail("ITEM")
 		for _, it := range in.Items {
-			t.AddRow(strconv.Itoa(int(it.LineNumber)), it.ItemName, it.Quantity.String(),
-				jsonfmt.FormatMoney(float64(it.UnitPrice)), it.TaxRate.String(), jsonfmt.FormatMoney(float64(it.TotalAmount)))
+			t.AddRow(itemCells(it)...)
 		}
 		return f.RenderTable(t)
 	})
+}
+
+// fullNumber is the number as the invoice shows it, its series then its number ("C26MMM330"), or ""
+// before the provider assigns one: a sandbox draft carries "0", and a real number starts at 1.
+func fullNumber(series, number string) string {
+	if strings.Trim(number, "0") == "" {
+		return ""
+	}
+	return series + number
+}
+
+// number is the original's number as fullNumber writes it, or "" when there is no original.
+func (o *original) number() string {
+	if o == nil {
+		return ""
+	}
+	return fullNumber(deref(o.InvoiceSeries), deref(o.InvoiceNumber))
+}
+
+// line is the original's number, then its reference code in parentheses when it has one.
+func (o *original) line() string {
+	if o == nil {
+		return ""
+	}
+	ref := deref(o.ReferenceCode)
+	if ref == "" {
+		return jsonfmt.OrDash(o.number())
+	}
+	return jsonfmt.OrDash(o.number()) + " (" + ref + ")"
+}
+
+// printInvoice writes the invoice header in blocks: the document, its buyer, then the money and
+// files. A field the server left empty is skipped, except Number, Issued and Payment, which print "-"
+// so a draft reads as not issued yet, and Subtotal, Tax and Total, which print 0.
+func printInvoice(f *cmdutil.Factory, in invoice) {
+	line := func(label, value string) {
+		if value != "" {
+			f.Printf("%-11s %s\n", label, value)
+		}
+	}
+	line("Number:", jsonfmt.OrDash(fullNumber(in.InvoiceSeries, in.InvoiceNumber)))
+	line("Original:", in.OriginalInvoice.line())
+	line("Ref:", in.ReferenceCode)
+	line("Type:", documentTypeName(in.DocumentType))
+	line("Status:", invoiceStatusColor(f.IOStreams, in.Status))
+	line("Issued:", jsonfmt.OrDash(in.IssuedDate))
+	line("Payment:", jsonfmt.OrDash(in.PaymentMethod))
+	line("Source:", in.Source)
+	line("Auth code:", deref(in.TaxAuthorityCode))
+	line("Provider:", providerStatusName(deref(in.ProviderStatus)))
+	if b := in.Buyer; b != nil {
+		fmt.Fprintln(f.IOStreams.Out)
+		name := b.Name
+		if b.Type != "" {
+			name += " " + f.IOStreams.Dim("("+b.Type+")")
+		}
+		line("Buyer:", name)
+		line("  Legal:", b.LegalName)
+		line("  Tax ID:", b.TaxCode)
+		line("  Address:", b.Address)
+		line("  Email:", b.Email)
+		line("  Phone:", b.Phone)
+	}
+	fmt.Fprintln(f.IOStreams.Out)
+	line("Subtotal:", jsonfmt.FormatMoney(float64(in.TotalBeforeTax)))
+	line("Tax:", jsonfmt.FormatMoney(float64(in.TaxAmount)))
+	line("Total:", jsonfmt.FormatMoney(float64(in.TotalAmount)))
+	line("Notes:", in.Notes)
+	line("PDF:", deref(in.PdfURL))
+	line("XML:", deref(in.XMLURL))
+}
+
+// itemCells renders one line item: its code and its kind (when it is not plain goods) after the
+// name, kept whole when a narrow terminal cuts the name, and its unit after the quantity. A note
+// line carries only text; a line without a quantity (a trade discount) leaves QTY and UNIT PRICE
+// empty. TAX% shows a line's tax rate; its tax amount is in --json only.
+func itemCells(it invoiceItem) []string {
+	var tail string
+	if it.ItemCode != "" {
+		tail += " (" + jsonfmt.Clean(it.ItemCode) + ")"
+	}
+	if kind := lineTypes[int(it.LineType)]; kind != "" {
+		tail += " · " + kind
+	}
+	name := jsonfmt.Clean(it.ItemName)
+	if tail != "" {
+		name += jsonfmt.TailSep + tail
+	}
+	cells := []string{strconv.Itoa(int(it.LineNumber)), name, "", "", "", ""}
+	if it.LineType == lineTypeNote {
+		return cells
+	}
+	if it.Quantity != 0 {
+		cells[2] = strings.TrimSpace(it.Quantity.String() + " " + it.Unit)
+		cells[3] = jsonfmt.FormatMoney(float64(it.UnitPrice))
+	}
+	cells[4] = taxRateText(it.TaxRate)
+	cells[5] = jsonfmt.FormatMoney(float64(it.TotalAmount))
+	return cells
 }

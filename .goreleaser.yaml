@@ -19,7 +19,8 @@ builds:
     # Keep the build machine's paths out of the shipped binary.
     flags: [-trimpath]
     # Stamp from the commit, not the build clock, so the same commit rebuilds to
-    # the same checksum.
+    # the same checksum on linux and windows. Signed darwin binaries embed Apple's
+    # timestamp (see `notarize`), so their archives do not.
     mod_timestamp: "{{ .CommitTimestamp }}"
     # Inject build info — same variables as the Makefile / internal/build.
     ldflags:
@@ -74,10 +75,12 @@ sboms:
 
 checksum:
   name_template: checksums.txt
-  # Listed so `sha256sum -c checksums.txt` covers the install script attached to the release.
+  # Listed so `sha256sum -c checksums.txt` covers the install scripts attached to the release.
   extra_files:
     - glob: ./scripts/install.sh
       name_template: sepay-cli-install.sh
+    - glob: ./scripts/install.ps1
+      name_template: sepay-cli-install.ps1
 
 # Keyless signing via cosign (GitHub OIDC) — no stored private key.
 # Signs the checksums file, which covers every artifact.
@@ -106,18 +109,24 @@ release:
   draft: false
   # Without this a -rc tag becomes GitHub's "latest" release.
   prerelease: auto
-  # The install script of this release, at releases/download/<tag>/sepay-cli-install.sh (and
-  # releases/latest/download/sepay-cli-install.sh for the newest final release, where the
-  # get.sepay.vn/sepay-cli-install.sh redirect points).
+  # The install scripts of this release, at releases/download/<tag>/sepay-cli-install.{sh,ps1}
+  # (and releases/latest/download/… for the newest final release, where the
+  # get.sepay.vn/sepay-cli-install.{sh,ps1} redirects point).
   extra_files:
     - glob: ./scripts/install.sh
       name_template: sepay-cli-install.sh
+    - glob: ./scripts/install.ps1
+      name_template: sepay-cli-install.ps1
   footer: |
     ## Install
 
     ```sh
     npm install -g sepay-cli@{{ .Version }}
     curl -fsSL https://github.com/sepayvn/sepay-cli/releases/download/{{ .Tag }}/sepay-cli-install.sh | sh -s -- --version {{ .Version }}
+    ```
+
+    ```powershell
+    $env:SEPAY_VERSION = '{{ .Version }}'; irm https://github.com/sepayvn/sepay-cli/releases/download/{{ .Tag }}/sepay-cli-install.ps1 | iex
     ```
 
     ## Verify

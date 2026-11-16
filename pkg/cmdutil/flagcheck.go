@@ -97,6 +97,20 @@ func ValidateDays(cmd *cobra.Command, flags ...string) error {
 	return nil
 }
 
+// ValidateDateOnly is ValidateDates for endpoints that take a bare date and nothing finer.
+func ValidateDateOnly(cmd *cobra.Command, flags ...string) error {
+	for _, flag := range flags {
+		v, ok := changedString(cmd, flag)
+		if !ok {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", v); err != nil {
+			return &FlagError{Err: fmt.Errorf("--%s must be a date (YYYY-MM-DD)", flag)}
+		}
+	}
+	return nil
+}
+
 // ValidateDateOrder rejects a date range whose start is after its end. A bare end date covers its
 // whole day, so "--from 2026-11-05 --to 2026-11-05" is one day, not an empty range. Run it after
 // ValidateDates or ValidateDays, which leave the values in a layout it reads.

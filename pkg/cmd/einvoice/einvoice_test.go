@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
@@ -143,10 +142,7 @@ func TestAccountGet_ShowsTemplates(t *testing.T) {
 }
 
 func TestInvoiceList_Table(t *testing.T) {
-	ei := routes(map[string]string{
-		"/v1/invoices": `{"data":{"paging":{"per_page":20,"total":1,"has_more":false,"current_page":1,"page_count":1},"items":[{"reference_code":"084e179d","invoice_number":"589","status":"issued","issued_date":"2026-01-26","total_amount":220000}]}}`,
-	})
-	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), ei)
+	f, out, _, _ := sandboxAPIFactory(t, okJSON(`{"status":"success","data":[{"reference_code":"084e179d","invoice_number":"589","status":"issued","issued_date":"2026-01-26","total_amount":220000}],"meta":{"pagination":{"total":1,"per_page":20,"current_page":1,"last_page":1,"has_more":false}}}`))
 	require.NoError(t, run(f, "invoice", "list"))
 	s := out.String()
 	assert.Contains(t, s, "084e179d")
@@ -155,11 +151,9 @@ func TestInvoiceList_Table(t *testing.T) {
 }
 
 func TestInvoiceGet_ShowsItems(t *testing.T) {
-	ei := routes(map[string]string{
-		"/v1/invoices/084e179d": `{"success":true,"data":{"reference_code":"084e179d","invoice_number":"589","invoice_series":"C26TSE","status":"issued","issued_date":"2026-01-26","payment_method":"TM","buyer":{"name":"Cong ty ABC","tax_code":"0123456789"},"total_before_tax":200000,"tax_amount":20000,"total_amount":220000,"items":[{"line_number":1,"line_type":1,"item_code":"SP001","item_name":"San pham 1","unit":"cai","quantity":1,"unit_price":200000,"total_amount":220000,"tax_rate":10,"tax_amount":20000}]}}`,
-	})
-	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), ei)
+	f, out, _, got := sandboxAPIFactory(t, okJSON(`{"status":"success","data":{"reference_code":"084e179d","invoice_number":"589","invoice_series":"C26TSE","status":"issued","issued_date":"2026-01-26","payment_method":"TM","buyer":{"name":"Cong ty ABC","tax_code":"0123456789"},"total_before_tax":200000,"tax_amount":20000,"total_amount":220000,"items":[{"line_number":1,"line_type":1,"item_code":"SP001","item_name":"San pham 1","unit":"cai","quantity":1,"unit_price":200000,"total_amount":220000,"tax_rate":10,"tax_amount":20000}]}}`))
 	require.NoError(t, run(f, "invoice", "get", "084e179d"))
+	assert.Equal(t, []string{"/einvoice/invoices/084e179d"}, got.paths)
 	s := out.String()
 	assert.Contains(t, s, "084e179d")
 	assert.Contains(t, s, "San pham 1")
@@ -167,7 +161,7 @@ func TestInvoiceGet_ShowsItems(t *testing.T) {
 }
 
 func TestInvoiceGet_NotFoundMapsToError(t *testing.T) {
-	f, _ := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{}))
+	f, _, _, _ := sandboxAPIFactory(t, apiError(http.StatusNotFound, "not_found", "Invoice not found"))
 	err := run(f, "invoice", "get", "NOPE")
 	require.Error(t, err)
 	assert.Equal(t, cmdutil.ExitError, cmdutil.ExitCodeForError(err))
@@ -231,6 +225,20 @@ func TestInvoiceCreateStatus_ShowsStatus(t *testing.T) {
 	assert.Contains(t, s, "Success")
 	assert.Contains(t, s, "589")
 	assert.NotContains(t, s, "thành công")
+
+	ei = routes(map[string]string{
+		"/v1/invoices/create/check/trk_1": `{"success":true,"data":{"reference_code":"trk_1","status":"Success","invoice":{"reference_code":"trk_1","invoice_number":"589","invoice_series":"C26MMM","total_amount":220000}}}`,
+	})
+	f, out = testFactory(t, okJSON(brokerEInvoiceBearer), ei)
+	require.NoError(t, run(f, "invoice", "create-status", "trk_1"))
+	assert.Contains(t, out.String(), "Number:  C26MMM589\n", "the number reads series first, as in list and get")
+
+	ei = routes(map[string]string{
+		"/v1/invoices/create/check/trk_1": `{"success":true,"data":{"reference_code":"trk_1","status":"Success","invoice":{"reference_code":"trk_1","invoice_number":"0","invoice_series":"C26MMM","total_amount":220000}}}`,
+	})
+	f, out = testFactory(t, okJSON(brokerEInvoiceBearer), ei)
+	require.NoError(t, run(f, "invoice", "create-status", "trk_1"))
+	assert.NotContains(t, out.String(), "Number:", "a draft's 0 is no number yet")
 }
 
 func TestInvoiceCreateStatus_FailedExitsNonZero(t *testing.T) {
@@ -322,11 +330,7 @@ func TestInvoiceList_SourceValidation(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			var got url.Values
-			f, _ := testFactory(t, okJSON(brokerEInvoiceBearer), func(w http.ResponseWriter, r *http.Request) {
-				got = r.URL.Query()
-				_, _ = w.Write([]byte(`{"data":{"paging":{"total":0},"items":[]}}`))
-			})
+			f, _, _, got := sandboxAPIFactory(t, okJSON(`{"status":"success","data":[]}`))
 
 			err := run(f, "invoice", "list", "--source", tt.value)
 
@@ -334,20 +338,21 @@ func TestInvoiceList_SourceValidation(t *testing.T) {
 				require.Error(t, err)
 				assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 				assert.Contains(t, err.Error(), "manual, api")
-				assert.Nil(t, got, "no request may be made")
+				assert.Empty(t, got.paths, "no request may be made")
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.query, got.Get("source"))
+			assert.Equal(t, tt.query, got.query.Get("source"))
 		})
 	}
 }
 
 func TestInvoiceGet_NoArgNonInteractiveIsUsageError(t *testing.T) {
-	f, _ := testFactory(t, okJSON(brokerEInvoiceBearer), func(_ http.ResponseWriter, _ *http.Request) {
+	f, _, _, got := sandboxAPIFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("must not call the server without a reference code")
 	})
 	err := run(f, "invoice", "get")
 	require.Error(t, err)
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.Empty(t, got.paths)
 }

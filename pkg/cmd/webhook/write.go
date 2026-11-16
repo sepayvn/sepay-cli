@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
@@ -40,6 +41,12 @@ account notifies: its account number (on or off) and its virtual accounts (all, 
   sepay webhook create --url https://example.com/hook --bank-mode multi --bank-account <va-only-ba-xid> --bank-account <sms-ba-xid> --bank-config <va-only-ba-xid>=off:all --bank-config <sms-ba-xid>=on:all`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// --listen-only answers production with its own sandbox-only error, before any prompt.
+			if listenOnly, _ := cmd.Flags().GetBool("listen-only"); !listenOnly {
+				if err := f.CheckProdWrite("create webhook", ""); err != nil {
+					return err
+				}
+			}
 			body, err := buildWriteBody(cmd.Context(), f, cmd, writeOptions{forCreate: true})
 			if err != nil {
 				return err
@@ -48,9 +55,10 @@ account notifies: its account number (on or off) and its virtual accounts (all, 
 		},
 	}
 	addWriteFlags(cmd)
+	cmdutil.AddDryRunFlag(cmd, f)
 	// --url and --bank-account requirements depend on other flags, so only --bank-mode is marked.
 	cmdutil.MarkRequired(cmd, "bank-mode")
-	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnScope: "webhook:write"})
+	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnScope: "webhook:write", cmdutil.AnnConfirms: "production=terminal"})
 }
 
 func newUpdateCmd(f *cmdutil.Factory) *cobra.Command {
@@ -69,6 +77,11 @@ it asks which settings to edit.
   sepay webhook update <webhook-xid> --bank-config <ba-xid>=off:list --va-xid <va-xid>`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if listenOnly, _ := cmd.Flags().GetBool("listen-only"); !listenOnly {
+				if err := f.CheckProdWrite("update webhook", cmdutil.FirstArg(args)); err != nil {
+					return err
+				}
+			}
 			xid, err := pickWebhook(cmd.Context(), f, cmdutil.FirstArg(args))
 			if err != nil {
 				return err
@@ -90,7 +103,8 @@ it asks which settings to edit.
 		},
 	}
 	addWriteFlags(cmd)
-	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnScope: "webhook:write"})
+	cmdutil.AddDryRunFlag(cmd, f)
+	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnScope: "webhook:write", cmdutil.AnnConfirms: "production=terminal"})
 }
 
 func addWriteFlags(cmd *cobra.Command) {
@@ -348,7 +362,7 @@ func validateBodyURL(body map[string]any, key, flag string) error {
 }
 
 func runCreate(ctx context.Context, f *cmdutil.Factory, body map[string]any) error {
-	if err := f.ConfirmMutation("create webhook", false); err != nil {
+	if err := f.ConfirmMutation("create webhook", "", false); err != nil {
 		return err
 	}
 	client, err := f.NewAPIClient()
@@ -358,6 +372,18 @@ func runCreate(ctx context.Context, f *cmdutil.Factory, body map[string]any) err
 	key, err := f.IdempotencyKey()
 	if err != nil {
 		return err
+	}
+	if f.Global.DryRun {
+		masked := maskedBody(body)
+		after, err := previewCreate(masked)
+		if err != nil {
+			return err
+		}
+		return f.RenderDryRun(cmdutil.DryRun{
+			Request:    cmdutil.DryRunRequest{Method: http.MethodPost, Path: "/webhooks", Body: masked},
+			After:      after,
+			NotChecked: []string{paymentSetupNotChecked},
+		}, func() error { return f.RenderFields(after) })
 	}
 	env, err := client.Post(ctx, "/webhooks", api.WriteOptions{Body: body, IdempotencyKey: key})
 	if err != nil {
@@ -380,12 +406,15 @@ func runUpdate(ctx context.Context, f *cmdutil.Factory, xid string, body map[str
 		return err
 	}
 
-	if err := f.ConfirmMutation("update webhook", false); err != nil {
+	if err := f.ConfirmMutation("update webhook", xid, false); err != nil {
 		return err
 	}
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return err
+	}
+	if f.Global.DryRun {
+		return dryRunUpdate(ctx, f, client, xid, xidSeg, body)
 	}
 	env, err := client.Put(ctx, "/webhooks/"+xidSeg, api.WriteOptions{Body: body})
 	if err != nil {
@@ -400,4 +429,21 @@ func runUpdate(ctx context.Context, f *cmdutil.Factory, xid string, body map[str
 		f.ErrPrintf("%s Updated webhook %s.\n", f.SuccessIcon(), w.ID)
 		return renderWebhookDetail(ctx, f, w)
 	})
+}
+
+// dryRunUpdate shows the webhook as stored and with the fields the body sends, as sent.
+func dryRunUpdate(ctx context.Context, f *cmdutil.Factory, client *api.Client, xid, xidSeg string, body map[string]any) error {
+	stored, err := fetchWebhook(ctx, client, xid)
+	if err != nil {
+		return err
+	}
+	before := stored.redacted()
+	p := previewUpdate(before, body)
+	masked := maskedBody(body)
+	return f.RenderDryRun(cmdutil.DryRun{
+		Request:    cmdutil.DryRunRequest{Method: http.MethodPut, Path: "/webhooks/" + xidSeg, Body: masked},
+		Before:     before,
+		After:      p.after,
+		NotChecked: []string{paymentSetupNotChecked},
+	}, func() error { return f.RenderChanges(before, p.after, p.replaced...) })
 }

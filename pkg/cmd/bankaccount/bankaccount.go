@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
@@ -537,7 +538,7 @@ an API connection.`,
 }
 
 func runCreate(ctx context.Context, f *cmdutil.Factory, body createBody) error {
-	if err := f.ConfirmMutation("create bank account", false); err != nil {
+	if err := f.ConfirmMutation("create bank account", "", false); err != nil {
 		return err
 	}
 	client, err := f.NewAPIClient()
@@ -588,6 +589,9 @@ func newUpdateCmd(f *cmdutil.Factory) *cobra.Command {
 <bank-account-xid> is the ID column of "sepay bank-account list". Prompted for on a terminal; required otherwise.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := f.CheckProdWrite("update bank account", cmdutil.FirstArg(args)); err != nil {
+				return err
+			}
 			xid, err := PickOne(cmd.Context(), f, cmdutil.FirstArg(args), "", "Bank account")
 			if err != nil {
 				return err
@@ -599,7 +603,8 @@ func newUpdateCmd(f *cmdutil.Factory) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "Display label")
-	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnScope: "bank-account:write"})
+	cmdutil.AddDryRunFlag(cmd, f)
+	return cmdutil.Annotate(cmd, map[string]string{cmdutil.AnnScope: "bank-account:write", cmdutil.AnnConfirms: "production=terminal"})
 }
 
 func runUpdate(ctx context.Context, f *cmdutil.Factory, xid string, body map[string]any) error {
@@ -608,12 +613,25 @@ func runUpdate(ctx context.Context, f *cmdutil.Factory, xid string, body map[str
 		return err
 	}
 
-	if err := f.ConfirmMutation("update bank account", false); err != nil {
+	if err := f.ConfirmMutation("update bank account", xid, false); err != nil {
 		return err
 	}
 	client, err := f.NewAPIClient()
 	if err != nil {
 		return err
+	}
+	if f.Global.DryRun {
+		before, err := Fetch(ctx, client, xid)
+		if err != nil {
+			return err
+		}
+		after := before
+		after.Label, _ = body["label"].(string)
+		return f.RenderDryRun(cmdutil.DryRun{
+			Request: cmdutil.DryRunRequest{Method: http.MethodPut, Path: "/bank-accounts/" + xidSeg, Body: body},
+			Before:  before,
+			After:   after,
+		}, func() error { return f.RenderChanges(before, after) })
 	}
 	env, err := client.Put(ctx, "/bank-accounts/"+xidSeg, api.WriteOptions{Body: body})
 	if err != nil {
@@ -661,7 +679,7 @@ func runDelete(ctx context.Context, f *cmdutil.Factory, xid string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.ConfirmMutation(fmt.Sprintf("delete bank account %s (also removes its VAs and transactions)", xid), true); err != nil {
+	if err := f.ConfirmMutation(fmt.Sprintf("delete bank account %s (also removes its VAs and transactions)", xid), xid, true); err != nil {
 		return err
 	}
 

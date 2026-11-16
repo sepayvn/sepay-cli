@@ -14,8 +14,10 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # Go modules: a PR when a dependency has a new version, and at once for a
-  # security fix. "fix" because a dependency bump changes the shipped binary.
+  # Go modules, the CI tools in go.mod's tool block included: a PR when a
+  # dependency has a new version, and at once for a security fix. "fix" because
+  # a bump can change the shipped binary; a bump of gitleaks or govulncheck alone
+  # ships the same binary and still cuts a release.
   - package-ecosystem: gomod
     directory: "/"
     schedule:
@@ -29,14 +31,3 @@ updates:
         applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
-  # CI tools (govulncheck, gitleaks) live in their own module so their dependencies
-  # never raise a version the shipped binary uses. "ci": a tool bump ships nothing.
-  - package-ecosystem: gomod
-    directory: "/tools"
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: ci
-    groups:
-      tools:
-        patterns: ["*"]

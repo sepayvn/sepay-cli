@@ -1,4 +1,5 @@
-// Package update notifies, at most once a day, of a newer or deprecated release. It never installs.
+// Package update notifies, at most once a day, of a newer or deprecated release, and replaces a
+// self-managed binary with a release from GitHub Releases on request.
 package update
 
 import (
@@ -10,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -29,11 +29,9 @@ const (
 	DisableEnv = "SEPAY_NO_UPDATE_NOTIFIER"
 
 	registryURL = "https://registry.npmjs.org/sepay-cli/"
-	// installScriptURL must match the get.sepay.vn redirect to the sepay-cli-install.sh release asset.
-	installScriptURL = "https://get.sepay.vn/sepay-cli-install.sh"
-	interval         = 24 * time.Hour
-	stateName        = "update-state.json"
-	maxBody          = 1 << 20
+	interval    = 24 * time.Hour
+	stateName   = "update-state.json"
+	maxBody     = 1 << 20
 	// A network-read deprecation message is cut to this length.
 	maxMessage = 300
 )
@@ -51,6 +49,9 @@ type Checker struct {
 type Result struct {
 	Latest     string
 	Deprecated string
+	// Recommended is the release the registry points to when the running final release is
+	// deprecated and nothing newer exists, i.e. the version to go back to.
+	Recommended string
 }
 
 type state struct {
@@ -94,8 +95,14 @@ func (c *Checker) Check(ctx context.Context, current string) (Result, error) {
 		return Result{}, err
 	}
 	res := Result{Deprecated: st.Deprecated}
-	if v, ok := parse(st.Latest); ok && v.newerThan(cur) {
-		res.Latest = strings.TrimPrefix(st.Latest, "v")
+	latest := strings.TrimPrefix(st.Latest, "v")
+	v, ok := parse(latest)
+	switch {
+	case ok && v.newerThan(cur):
+		res.Latest = latest
+	// While only prereleases exist, latest is a placeholder; a final release proves it is not.
+	case ok && st.Deprecated != "" && len(cur.pre) == 0 && latest != current:
+		res.Recommended = latest
 	}
 	return res, nil
 }
@@ -217,50 +224,105 @@ func Notice(current string, r Result, exe string) string {
 	if r.Latest != "" {
 		fmt.Fprintf(&b, "A new release of sepay-cli is available: %s → %s\n", current, r.Latest)
 	}
-	if cmd := upgradeCommand(current, r, exe); cmd != "" {
+	if cmd := noticeCommand(DetectChannel(exe), current, r); cmd != "" {
 		b.WriteString("To upgrade: " + cmd + "\n")
 	}
 	fmt.Fprintf(&b, "Turn this notice off with %s=1.\n", DisableEnv)
 	return b.String()
 }
 
-// upgradeCommand names the upgrade for the channel that installed exe; "" for a Windows binary
-// copied by hand, which has no command to offer.
-func upgradeCommand(current string, r Result, exe string) string {
+// noticeCommand is the update command a notice names; "" when ch has none that leaves the
+// deprecated release.
+func noticeCommand(ch Channel, current string, r Result) string {
+	if ch != ChannelStandalone || r.Latest != "" {
+		return ch.UpdateCommand(current, r.Latest)
+	}
+	// sepay update alone installs only a newer release, so a withdrawn one names its way back.
+	if r.Recommended != "" {
+		return ch.InstallCommand(r.Recommended)
+	}
+	return ""
+}
+
+// Channel is how sepay was installed.
+type Channel string
+
+// The install channels. Only a standalone binary is replaced by "sepay update"; a package manager
+// keeps its own record of what it installed, so it does the update.
+const (
+	ChannelNPM      Channel = "npm"
+	ChannelHomebrew Channel = "homebrew"
+	ChannelScoop    Channel = "scoop"
+	ChannelGo       Channel = "go"
+	// ChannelStandalone is a binary from install.sh, install.ps1 or an archive unpacked by hand.
+	ChannelStandalone Channel = "standalone"
+)
+
+// DetectChannel reads the channel off exe, which must have its symlinks resolved: Homebrew and
+// npm start sepay through one.
+func DetectChannel(exe string) Channel {
 	path := filepath.ToSlash(exe)
 	switch {
 	case strings.Contains(path, "/node_modules/"):
+		return ChannelNPM
+	case strings.Contains(path, "/Caskroom/"), strings.Contains(path, "/Cellar/"):
+		return ChannelHomebrew
+	case strings.Contains(strings.ToLower(path), "/scoop/apps/"):
+		return ChannelScoop
+	case build.FromGoInstall:
+		return ChannelGo
+	}
+	return ChannelStandalone
+}
+
+// Title names ch in a sentence.
+func (ch Channel) Title() string {
+	switch ch {
+	case ChannelNPM:
+		return "npm"
+	case ChannelHomebrew:
+		return "Homebrew"
+	case ChannelScoop:
+		return "Scoop"
+	case ChannelGo:
+		return "go install"
+	}
+	return "a standalone binary"
+}
+
+// UpdateCommand is the command that updates sepay through ch: to latest, or along the prerelease
+// line of current when latest is "".
+func (ch Channel) UpdateCommand(current, latest string) string {
+	switch ch {
+	case ChannelNPM:
 		// A prerelease's notice points to its own channel: latest may still be a placeholder.
 		tag := "latest"
-		if r.Latest == "" {
+		if latest == "" {
 			tag = distTag(current)
 		}
 		return "npm install -g " + Package + "@" + tag + "  (in a project: npm install -D " + Package + "@" + tag + ")"
-	case strings.Contains(path, "/Caskroom/"), strings.Contains(path, "/Cellar/"):
+	case ChannelHomebrew:
 		return "brew upgrade sepay"
-	case strings.Contains(strings.ToLower(path), "/scoop/apps/"):
+	case ChannelScoop:
 		return "scoop update sepay"
-	case build.FromGoInstall:
+	case ChannelGo:
 		return "go install github.com/sepayvn/sepay-cli/cmd/sepay@latest"
-	case runtime.GOOS == "windows":
-		return ""
 	}
-	// install.sh, or an archive unpacked by hand: reinstall into the same directory.
-	dir := filepath.Dir(exe)
-	if home, err := os.UserHomeDir(); err == nil && dir == filepath.Join(home, ".local", "bin") {
-		return "curl -fsSL " + installScriptURL + " | sh"
-	}
-	return "curl -fsSL " + installScriptURL + " | SEPAY_INSTALL_DIR=" + shellQuote(dir) + " sh"
+	return "sepay update"
 }
 
-// shellQuote leaves a plain path as it is and single-quotes anything else.
-func shellQuote(s string) string {
-	if s != "" && strings.IndexFunc(s, func(r rune) bool {
-		return !strings.ContainsRune("/._-+~", r) && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z')
-	}) < 0 {
-		return s
+// InstallCommand is the command that installs exactly version through ch; "" when ch only
+// installs its newest release.
+func (ch Channel) InstallCommand(version string) string {
+	switch ch {
+	case ChannelNPM:
+		return "npm install -g " + Package + "@" + version + "  (in a project: npm install -D " + Package + "@" + version + ")"
+	case ChannelGo:
+		return "go install github.com/sepayvn/sepay-cli/cmd/sepay@v" + version
+	case ChannelStandalone:
+		return "sepay update --version " + version
 	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return ""
 }
 
 // distTag mirrors the dist-tag step of .github/workflows/release.yml.
@@ -281,6 +343,20 @@ func distTag(v string) string {
 type version struct {
 	core [3]int
 	pre  []string
+}
+
+// ValidVersion reports whether v is a release version without the "v" of its tag, e.g. 0.2.0 or
+// 0.2.0-rc.1.
+func ValidVersion(v string) bool {
+	_, ok := parse(v)
+	return ok && !strings.HasPrefix(v, "v")
+}
+
+// Newer reports whether release a is newer than release b; false when either is not a version.
+func Newer(a, b string) bool {
+	va, okA := parse(a)
+	vb, okB := parse(b)
+	return okA && okB && va.newerThan(vb)
 }
 
 func parse(s string) (version, bool) {

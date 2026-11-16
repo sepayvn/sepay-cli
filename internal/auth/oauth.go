@@ -173,6 +173,7 @@ func (c *Client) postForm(ctx context.Context, path string, form url.Values, out
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", api.UserAgent())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

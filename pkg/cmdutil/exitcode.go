@@ -12,7 +12,6 @@ const (
 	ExitAuth           ExitCode = 4   // not authenticated (run sepay login)
 	ExitScope          ExitCode = 5   // token lacks the scope; the caller can widen it
 	ExitForward        ExitCode = 6   // local handler forward failed
-	ExitOTP            ExitCode = 7   // OTP required / invalid
 	ExitBlocked        ExitCode = 8   // blocked by account config or in-app permission
 	ExitInterrupted    ExitCode = 130 // Ctrl+C or Esc at a prompt, or SIGINT/SIGTERM
 )
@@ -25,7 +24,6 @@ var errorCodes = map[ExitCode]string{
 	ExitAuth:           "unauthenticated",
 	ExitScope:          "insufficient_scope",
 	ExitForward:        "forward_failed",
-	ExitOTP:            "otp_required",
 	ExitBlocked:        "blocked",
 	ExitInterrupted:    "interrupted",
 }

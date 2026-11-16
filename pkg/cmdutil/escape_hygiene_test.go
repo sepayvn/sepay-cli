@@ -27,7 +27,7 @@ func assertClean(t *testing.T, where, got string) {
 func TestConfirmMutation_BannerIsSanitized(t *testing.T) {
 	ios, _, _, errOut := iostreams.Test()
 	f := &Factory{IOStreams: ios, Global: &GlobalOptions{Env: config.EnvProduction, Yes: true}}
-	require.NoError(t, f.ConfirmMutation("api DELETE /v2/bank-accounts/ba_x/va/0123456789"+escapePayload, true))
+	require.NoError(t, f.ConfirmMutation("api DELETE /v2/bank-accounts/ba_x/va/0123456789"+escapePayload, "0123456789", true))
 	assertClean(t, "production banner", errOut.String())
 	require.Contains(t, errOut.String(), "/v2/bank-accounts/ba_x/va/0123456789", "the operation must stay readable")
 }
@@ -35,7 +35,7 @@ func TestConfirmMutation_BannerIsSanitized(t *testing.T) {
 func TestConfirmMutation_CancelErrorIsSanitized(t *testing.T) {
 	ios, _, _, _ := iostreams.Test() // non-TTY, no --yes: refuses with a usage error
 	f := &Factory{IOStreams: ios, Global: &GlobalOptions{Env: config.EnvProduction}}
-	err := f.ConfirmMutation("cancel order INV-1"+escapePayload, true)
+	err := f.ConfirmMutation("cancel order INV-1"+escapePayload, "INV-1", true)
 	require.Error(t, err)
 	assertClean(t, "confirm error", err.Error())
 }
@@ -43,7 +43,7 @@ func TestConfirmMutation_CancelErrorIsSanitized(t *testing.T) {
 func TestConfirmMutation_SandboxConfirmIsSanitized(t *testing.T) {
 	ios, _, _, _ := iostreams.Test()
 	f := &Factory{IOStreams: ios, Global: &GlobalOptions{Env: config.EnvSandbox}}
-	err := f.ConfirmMutation("revoke virtual account 0123456789"+escapePayload, true)
+	err := f.ConfirmMutation("revoke virtual account 0123456789"+escapePayload, "0123456789", true)
 	require.Error(t, err)
 	assertClean(t, "sandbox confirm error", err.Error())
 }

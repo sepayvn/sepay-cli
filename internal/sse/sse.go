@@ -110,6 +110,7 @@ func (c *Client) Open(ctx context.Context, hubURL, listenKey string, heartbeat t
 	req.Header.Set("Authorization", "Bearer "+listenKey)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("User-Agent", api.UserAgent())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

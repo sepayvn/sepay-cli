@@ -261,9 +261,20 @@ const hidden = "(hidden)"
 func SignedAmount(f *cmdutil.Factory, tx Transaction) string {
 	switch tx.TransferType {
 	case "out":
-		return f.IOStreams.Red("-" + amountOrHidden(tx.AmountOut))
+		return f.IOStreams.Red(SignedAmountText(tx))
 	case "in":
-		return f.IOStreams.Green("+" + amountOrHidden(tx.AmountIn))
+		return f.IOStreams.Green(SignedAmountText(tx))
+	}
+	return hidden
+}
+
+// SignedAmountText is SignedAmount without color, for machine output.
+func SignedAmountText(tx Transaction) string {
+	switch tx.TransferType {
+	case "out":
+		return "-" + amountOrHidden(tx.AmountOut)
+	case "in":
+		return "+" + amountOrHidden(tx.AmountIn)
 	}
 	return hidden
 }

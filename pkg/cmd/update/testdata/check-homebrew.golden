@@ -1,0 +1,7 @@
+{
+  "current": "0.1.7",
+  "latest": "0.2.0",
+  "update_available": true,
+  "channel": "homebrew",
+  "update_command": "brew upgrade sepay"
+}

@@ -48,7 +48,7 @@ func TestRoot_WiresAllCommands(t *testing.T) {
 	}
 	for _, name := range []string{
 		"auth", "login", "logout", "version",
-		"webhook", "transaction", "report", "bank-account", "va",
+		"webhook", "transaction", "bank-account", "va",
 		"quota", "paycode", "apikey", "sandbox",
 		"pg", "einvoice", "bankhub", "api", "completion",
 	} {

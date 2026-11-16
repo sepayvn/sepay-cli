@@ -1,0 +1,31 @@
+Number:     1C26TSP0000125
+Ref:        DH1009
+Type:       Replacement
+Status:     issued
+Issued:     2026-11-10
+Payment:    TM/CK
+Source:     api
+Auth code:  M2-26-ABCDE-0000125
+Provider:   Issued / Accepted by tax authority
+
+Buyer:      Công ty A (company)
+  Legal:    Công ty TNHH A
+  Tax ID:   0101234567
+  Address:  12 Lê Lợi, Quận 1
+  Email:    ketoan@congtya.vn
+  Phone:    0900000000
+
+Subtotal:   290.000
+Tax:        29.000
+Total:      319.000
+Notes:      Giao trong 3 ngày
+PDF:        https://files.example/DH1009.pdf
+XML:        https://files.example/DH1009.xml
+
+#        ITEM                                        QTY          UNIT PRICE        TAX%              AMOUNT
+1        Áo thun cotton (SP01)                       2 cái        100.000           10                200.000
+2        Móc khóa quà tặng (KM01) · promotion        1 cái        0                 10                0
+3        Chiết khấu thương mại · discount                                           10                -10.000
+4        Phí giao hàng                               1 lần        100.000           exempt            100.000
+5        Gói tư vấn                                  1.5          20.000            undeclared        30.000
+6        Giao trong 3 ngày · note

@@ -344,3 +344,71 @@ func TestAPI_PrintsURLsUnescaped(t *testing.T) {
 	require.NoError(t, run(NewCmdAPI(f), "/webhooks"))
 	assert.Contains(t, out.String(), `"url": "https://shop.example/cb?a=1&b=<2>"`)
 }
+
+// Only the path names a resource: an id in the query or fragment never reaches it as a segment.
+func TestNamedResource(t *testing.T) {
+	const xid = "11111111-2222-4333-8444-555555555555"
+	cases := []struct {
+		path  string
+		named bool
+	}{
+		{"/webhooks/" + xid, true},
+		{"/webhooks/" + xid + "/", true},
+		{"/webhooks/" + xid + "?x=1", true},
+		{"/bank-accounts/" + xid + "/va/" + xid, true},
+		{"/bank-accounts/" + xid + "/orders/" + xid + "/va/" + xid, true},
+		{"/webhooks/" + strings.ToUpper(xid), true},
+		{"/orders/1234", true},
+		{"/bank-accounts/" + xid + "/va", false},
+		{"/bank-accounts/" + xid + "/orders", false},
+		{"/bank-accounts/" + xid + "/orders/" + xid + "/va", false},
+		{"/webhook-logs/" + xid + "/replay", false},
+		{"/", false},
+		{"/webhooks", false},
+		{"/webhook-logs/replay", false},
+		{"/company/paycode", false},
+		{"/webhooks?id=" + xid, false},
+		{"/webhooks#/" + xid, false},
+		{"/webhooks#" + xid, false},
+		{"/webhooks/" + xid[:35], false},
+		{"/webhooks/x" + xid, false},
+		{"/webhooks/%31%32", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			assert.Equal(t, tc.named, namedResource(tc.path) != "")
+		})
+	}
+}
+
+func TestActionEndpoint_NeverPrintsAQueryValue(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/webhooks", "/webhooks"},
+		{"/webhooks/1", "/webhooks/1"},
+		{"/webhooks?access_token=S", "/webhooks?access_token=***"},
+		{"/webhooks?a=1&token=S", "/webhooks?a=***&token=***"},
+		{"/webhooks?a=1;token=S", "/webhooks?a=***&token=***"},
+		{"/webhooks?S", "/webhooks?***"},
+		{"/webhooks?access_token%3DS", "/webhooks?***"},
+		{"/webhooks?x=1?token=S", "/webhooks?x=***"},
+		{"/webhooks?token=a=S", "/webhooks?token=***"},
+		{"/webhooks?", "/webhooks?"},
+		{"/webhooks#token=S", "/webhooks"},
+		{"/webhooks#x?token=S", "/webhooks"},
+		{"/webhooks?a=1#S", "/webhooks?a=***"},
+		{"/https://u:S@h/v2/webhooks", "/https://***@h/v2/webhooks"},
+		{"/https://S@h", "/https://***@h"},
+		{"/https://u:S@x@h/", "/https://***@h/"},
+		{"//u:S@h/webhooks", "//***@h/webhooks"},
+		{"/https://u:S@h/webhooks?t=S", "/https://***@h/webhooks?t=***"},
+		{"/https://h/webhooks/a@b", "/https://h/webhooks/a@b"},
+		{"/webhooks/a@b", "/webhooks/a@b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got := actionEndpoint(tc.in)
+			assert.Equal(t, tc.want, got)
+			assert.NotContains(t, got, "S")
+		})
+	}
+}

@@ -231,7 +231,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runCreate(ctx context.Context, f *cmdutil.Factory, body createBody) error {
-	if err := f.ConfirmMutation("create API key", false); err != nil {
+	if err := f.ConfirmMutation("create API key", "", false); err != nil {
 		return err
 	}
 	client, err := f.NewAPIClient()
@@ -337,7 +337,7 @@ func runUpdate(ctx context.Context, f *cmdutil.Factory, xid string, body map[str
 	if err != nil {
 		return err
 	}
-	if err := f.ConfirmMutation("update API key "+xid, false); err != nil {
+	if err := f.ConfirmMutation("update API key "+xid, xid, false); err != nil {
 		return err
 	}
 	client, err := f.NewAPIClient()
@@ -388,7 +388,7 @@ func runDelete(ctx context.Context, f *cmdutil.Factory, xid string) error {
 	if err != nil {
 		return err
 	}
-	if err := f.ConfirmMutation(fmt.Sprintf("delete API key %s (anything authenticating with it stops working at once)", xid), true); err != nil {
+	if err := f.ConfirmMutation(fmt.Sprintf("delete API key %s (anything authenticating with it stops working at once)", xid), xid, true); err != nil {
 		return err
 	}
 	client, err := f.NewAPIClient()

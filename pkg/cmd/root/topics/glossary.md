@@ -15,12 +15,13 @@ sandbox moves no real money. `--env` picks one.
 type (`ba_xid` is a bank account). `pg order` takes an invoice number instead.
 
 **scope**: a permission the token carries: `read`, `webhook:write`, `bank-account:write`,
-`paycode:write`. Scopes apply on production only; in sandbox a login can read and write without
-them. Add one with `sepay auth refresh --scopes <scope>`.
-
-**OTP**: a one-time code the server can require for some production writes on an official VA. The
-CLI cannot answer one: the command exits 7 and the action is done in the web app. The commands
-that could trigger an OTP are sandbox-only, and sandbox never asks for one.
+`paycode:write`, `pg:read`, `einvoice:read`. Scopes apply on production only; in sandbox a login can read and
+write without them. Scopes are granted at `sepay login`, where you tick them; `sepay auth refresh
+--scopes` can drop one but never add one, so a missing scope needs a new `sepay login`.
+`pg:read` (for `pg order list` and `get`) is offered only to a SuperAdmin, an Admin or a user with
+the permission «Cổng thanh toán › Xem danh sách đơn hàng»; `einvoice:read` (for `einvoice invoice list` and `get`) only to a
+SuperAdmin, an Admin or a user with the permission
+«Hóa đơn điện tử (eInvoice) › Xem danh sách hóa đơn điện tử».
 
 ## Banking
 
@@ -52,8 +53,10 @@ URL. `sepay webhook`.
 - Sandbox (Test Mode): 500 transactions a day (reset at 00:00 UTC+7), 50 bank accounts,
   50 webhooks, 50 API keys and 100 VAs per bank account. A write over a limit is rejected
   (`enforcement: blocked`).
-- Production: needs an Admin or SuperAdmin and reports only the plan's transaction allowance for
-  the billing cycle. What happens past it is set by your plan, not by the CLI.
+- Production: needs an Admin or SuperAdmin and reports the plan's transaction allowance for the
+  billing cycle and, when the plan is active, the e-invoices issued to date and how many it still
+  lets you issue (`remaining`). There is no `einvoice` entry if your company has not bought an
+  e-invoice plan. What happens past an allowance is set by your plan, not by the CLI.
 
 | `enforcement` | Meaning |
 |---|---|
@@ -67,7 +70,8 @@ reaching the limit stops anything.
 
 ## pg: Payment Gateway
 
-A hosted checkout for card payments and bank transfers that you start for a buyer. Sandbox only.
+A hosted checkout for card payments and bank transfers that you start for a buyer. Sandbox only,
+except `pg order list` and `pg order get`, which also read production.
 
 **order**: one payment, addressed by its invoice number. `pg order list --status` takes
 `AUTHENTICATION_NOT_NEEDED` (waiting for payment), `CAPTURED` (paid) or `CANCELLED` (cancelled or

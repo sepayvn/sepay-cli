@@ -6,12 +6,11 @@ Script against the exit code and `error_code`, not the message text.
 |---|---|---|
 | 0 | Success | |
 | 1 | Server error, network error or rejected input | Branch on `error_code` before retrying |
-| 2 | Bad flags, bad arguments, unknown command | Fix the command |
+| 2 | Bad flags, bad arguments, unknown command, or a production write that needs the user's confirmation | Fix the command; for a production write, ask the user to run it in their own terminal |
 | 3 | The command has no backend | Do not retry |
 | 4 | Not logged in | `sepay login` |
-| 5 | The token lacks the required scope | `sepay auth refresh --scopes <scope>` |
+| 5 | The token lacks the required scope | `sepay login --scopes <scope>` |
 | 6 | Your local handler did not accept the event (`webhook test` only) | Fix the handler, then retry |
-| 7 | The server requires an OTP | Do the action in the web app |
 | 8 | Your account or company is not allowed to do this | Ask SePay or a company admin |
 | 130 | Interrupted: Ctrl+C, Esc at a prompt, SIGINT or SIGTERM | Run it again |
 

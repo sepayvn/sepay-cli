@@ -20,9 +20,9 @@ import (
 	"github.com/sepayvn/sepay-cli/pkg/cmd/paycode"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/pg"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/quota"
-	"github.com/sepayvn/sepay-cli/pkg/cmd/report"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/sandbox"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/transaction"
+	"github.com/sepayvn/sepay-cli/pkg/cmd/update"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/va"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/version"
 	"github.com/sepayvn/sepay-cli/pkg/cmd/webhook"
@@ -120,9 +120,9 @@ Documentation: https://developer.sepay.vn/en/agents/cli`,
 	pf.StringVarP(&g.Output, "output", "o", "table", "Output format: table|json|yaml")
 	pf.Var(jsonShorthand{output: &g.Output}, "json", "Shorthand for -o json")
 	pf.Lookup("json").NoOptDefVal = "true"
-	pf.BoolVarP(&g.Yes, "yes", "y", false, "Skip confirmation (cannot bypass OTP)")
+	pf.BoolVarP(&g.Yes, "yes", "y", false, "Skip confirmation; a production write also needs --env production and must name its resource")
 	pf.BoolVarP(&g.Quiet, "quiet", "q", false, "Suppress non-essential output")
-	pf.BoolVarP(&g.Verbose, "verbose", "v", false, "Enable debug logging (tokens/OTP always redacted)")
+	pf.BoolVarP(&g.Verbose, "verbose", "v", false, "Enable debug logging (tokens always redacted)")
 	pf.BoolVar(&g.NoColor, "no-color", false, "Disable ANSI color")
 	pf.BoolVar(&g.NoInput, "no-input", false, "Never prompt; a missing required value is an error")
 	pf.StringVar(&g.ConfigPath, "config", "", "Config file path (default: <os-config-dir>/sepay/config.yml, see: sepay help environment)")
@@ -163,7 +163,6 @@ Documentation: https://developer.sepay.vn/en/agents/cli`,
 
 	cmd.AddCommand(webhook.NewCmdWebhook(f))
 	cmd.AddCommand(transaction.NewCmdTransaction(f))
-	cmd.AddCommand(report.NewCmdReport(f))
 	cmd.AddCommand(bankaccount.NewCmdBankAccount(f))
 	cmd.AddCommand(va.NewCmdVA(f))
 	cmd.AddCommand(quota.NewCmdQuota(f))
@@ -177,6 +176,7 @@ Documentation: https://developer.sepay.vn/en/agents/cli`,
 	cmd.AddCommand(api.NewCmdAPI(f))
 	cmd.AddCommand(configcmd.NewCmdConfig(f))
 	cmd.AddCommand(completion.NewCmdCompletion(f))
+	cmd.AddCommand(update.NewCmdUpdate(f))
 	for _, t := range helpTopics {
 		cmd.AddCommand(newHelpTopic(f, t.name, t.short))
 	}
@@ -200,11 +200,11 @@ var commandGroups = []struct {
 }{
 	{
 		cobra.Group{ID: "core", Title: "Core Commands:"},
-		[]string{"transaction", "bank-account", "va", "webhook", "paycode", "quota", "sandbox", "report"},
+		[]string{"transaction", "bank-account", "va", "webhook", "paycode", "quota", "sandbox"},
 	},
 	{cobra.Group{ID: "products", Title: "Product Commands:"}, []string{"pg", "bankhub", "einvoice"}},
 	{cobra.Group{ID: "account", Title: "Account Commands:"}, []string{"login", "logout", "auth", "apikey", "config"}},
-	{cobra.Group{ID: "utilities", Title: "Utility Commands:"}, []string{"api", "completion", "version"}},
+	{cobra.Group{ID: "utilities", Title: "Utility Commands:"}, []string{"api", "completion", "update", "version"}},
 }
 
 func groupCommands(root *cobra.Command) {

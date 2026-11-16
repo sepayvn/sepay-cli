@@ -21,7 +21,7 @@ import (
 
 // knownScopes is what login requests by default and refresh validates against. It is a subset of the server's
 // DeviceVerification::PRODUCTION_ACTIONS (see TestKnownScopes_AreServerProductionActions).
-var knownScopes = []string{"read", "webhook:write", "bank-account:write", "paycode:write"}
+var knownScopes = []string{"read", "webhook:write", "bank-account:write", "paycode:write", "pg:read", "einvoice:read"}
 
 var defaultLoginScopes = strings.Join(knownScopes, ",")
 

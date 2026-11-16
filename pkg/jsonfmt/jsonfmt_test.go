@@ -102,6 +102,8 @@ func TestStripUnsafe_KeepsOnlyTheSGRCodesTheCLIEmits(t *testing.T) {
 		{"256-color", "hook\x1b[38;5;196mX", "hook[38;5;196mX"},
 		{"CLI red", "\x1b[31mfailed\x1b[0m", "\x1b[31mfailed\x1b[0m"},
 		{"CLI green", "\x1b[32mok\x1b[0m", "\x1b[32mok\x1b[0m"},
+		{"CLI yellow", "\x1b[33mdraft\x1b[0m", "\x1b[33mdraft\x1b[0m"},
+		{"CLI yellow after a reset", "\x1b[0;33mdraft\x1b[0m", "\x1b[0;33mdraft\x1b[0m"},
 		{"CLI dim", "\x1b[2mmeta\x1b[0m", "\x1b[2mmeta\x1b[0m"},
 		{"CLI cyan", "\x1b[36mID\x1b[0m", "\x1b[36mID\x1b[0m"},
 	}

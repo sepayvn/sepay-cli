@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sepayvn/sepay-cli/internal/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,16 +35,25 @@ func jq(s string) string {
 }
 
 func TestInvoiceGet_SanitizesServerStrings(t *testing.T) {
-	body := fmt.Sprintf(`{"success":true,"data":{"reference_code":%s,"invoice_number":"589","invoice_series":%s,"status":%s,"issued_date":"2026-01-26","payment_method":"TM","buyer":{"name":%s,"tax_code":%s},"pdf_url":%s,"total_before_tax":200000,"tax_amount":20000,"total_amount":220000,"items":[{"line_number":1,"item_name":%s,"quantity":1,"unit_price":200000,"tax_rate":10,"total_amount":220000}]}}`,
+	body := fmt.Sprintf(`{"status":"success","data":{"reference_code":%s,"invoice_number":"589","invoice_series":%s,"status":%s,"issued_date":"2026-01-26","payment_method":"TM","buyer":{"name":%s,"tax_code":%s},"pdf_url":%s,"total_before_tax":200000,"tax_amount":20000,"total_amount":220000,`+
+		`"original_invoice":{"reference_code":%s,"invoice_number":"120","invoice_series":%s,"issued_date":null},"items":[{"line_number":1,"item_name":%s,"quantity":1,"unit_price":200000,"tax_rate":10,"total_amount":220000}]}}`,
 		jq(poison("084e179d")), jq(poison("C26TSE")), jq(poison("issued")),
 		jq(poison("Cong ty ABC")), jq(poison("0123456789")),
-		jq(poison("https://x.test/a.pdf")), jq(poison("San pham 1")))
-	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/084e179d": body}))
-	require.NoError(t, run(f, "invoice", "get", "084e179d"))
-	assertClean(t, "invoice get", out.String())
-	require.Contains(t, out.String(), "084e179d")
-	require.Contains(t, out.String(), "San pham 1")
-	require.Contains(t, out.String(), "220.000")
+		jq(poison("https://x.test/a.pdf")), jq(poison("DH1")), jq(poison("C26OLD")), jq(poison("San pham 1")))
+	for _, env := range []string{config.EnvProduction, config.EnvSandbox} {
+		t.Run(env, func(t *testing.T) {
+			f, out, _, got := apiFactory(t, env, okJSON(body))
+			require.NoError(t, run(f, "invoice", "get", "084e179d"))
+			require.Equal(t, []string{"/einvoice/invoices/084e179d"}, got.paths)
+			assertClean(t, "invoice get", out.String())
+			require.Contains(t, out.String(), "084e179d")
+			require.Contains(t, out.String(), "C26TSE")
+			require.Contains(t, out.String(), "C26OLD")
+			require.Contains(t, out.String(), "DH1")
+			require.Contains(t, out.String(), "San pham 1")
+			require.Contains(t, out.String(), "220.000")
+		})
+	}
 }
 
 func TestAccountGet_SanitizesServerStrings(t *testing.T) {
@@ -65,11 +76,13 @@ func TestInvoiceCreateStatus_SanitizesServerStrings(t *testing.T) {
 }
 
 func TestInvoiceList_SanitizesServerStrings(t *testing.T) {
-	body := fmt.Sprintf(`{"success":true,"data":{"items":[{"reference_code":%s,"invoice_number":"589","status":%s,"issued_date":"2026-01-26","total_amount":220000}],"paging":{"current_page":1,"page_count":1,"total":1}}}`,
-		jq(poison("084e179d")), jq(poison("issued")))
-	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices": body}))
+	body := fmt.Sprintf(`{"status":"success","data":[{"reference_code":%s,"invoice_number":"589","invoice_series":%s,"status":%s,"issued_date":"2026-01-26","total_amount":220000,`+
+		`"original_invoice":{"reference_code":"DH1","invoice_number":"120","invoice_series":%s,"issued_date":null}}],"meta":{"pagination":{"current_page":1,"last_page":1,"total":1}}}`,
+		jq(poison("084e179d")), jq(poison("C26TSE")), jq(poison("issued")), jq(poison("C26OLD")))
+	f, out, _, _ := sandboxAPIFactory(t, okJSON(body))
 	require.NoError(t, run(f, "invoice", "list"))
 	assertClean(t, "invoice list", out.String())
+	require.Contains(t, out.String(), "C26OLD")
 }
 
 func TestQuota_SanitizesServerStrings(t *testing.T) {
@@ -81,9 +94,9 @@ func TestQuota_SanitizesServerStrings(t *testing.T) {
 
 // JSON escapes control bytes itself, so machine output stays raw.
 func TestInvoiceGet_JSONKeepsRawValue(t *testing.T) {
-	body := fmt.Sprintf(`{"success":true,"data":{"reference_code":%s,"invoice_number":"589","status":"issued","issued_date":"2026-01-26","total_before_tax":1,"tax_amount":0,"total_amount":2}}`,
+	body := fmt.Sprintf(`{"status":"success","data":{"reference_code":%s,"invoice_number":"589","status":"issued","issued_date":"2026-01-26","total_before_tax":1,"tax_amount":0,"total_amount":2}}`,
 		jq(poison("084e179d")))
-	f, out := testFactory(t, okJSON(brokerEInvoiceBearer), routes(map[string]string{"/v1/invoices/084e179d": body}))
+	f, out, _, _ := sandboxAPIFactory(t, okJSON(body))
 	f.Global.Output = "json"
 	require.NoError(t, run(f, "invoice", "get", "084e179d"))
 

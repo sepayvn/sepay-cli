@@ -53,7 +53,7 @@ again.`,
 	fl.StringVar(&opts.token, "token", "", "Revoke one session by id (see: sepay auth sessions)")
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnDestructive: "irreversible",
-		cmdutil.AnnGuidance:    "--all ends every session of the account on every machine, including CI. A revoked token cannot be un-revoked; the holder must log in again.",
+		cmdutil.AnnGuidance:    "--all prompts first: it ends every session of the account on every machine, including CI, in sandbox and production alike. A revoked token cannot be un-revoked; the holder must log in again.",
 		cmdutil.AnnConfirms:    "conditional",
 	})
 }

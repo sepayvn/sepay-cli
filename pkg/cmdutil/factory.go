@@ -30,7 +30,7 @@ const ClientID = "sepay-cli"
 
 const defaultOAuthHost = "my.sepay.vn"
 
-// GlobalOptions holds persistent-flag values, read lazily by the Factory closures.
+// GlobalOptions holds the global flags, and --dry-run of the production writes, read lazily by the Factory closures.
 type GlobalOptions struct {
 	Profile        string // --profile/-p
 	Env            string // --env: "" (use config), "sandbox" or "production"
@@ -43,6 +43,7 @@ type GlobalOptions struct {
 	ConfigPath     string // --config
 	APIBase        string // --api-base
 	IdempotencyKey string // --idempotency-key: reuse one key across attempts of the same mutation
+	DryRun         bool   // --dry-run, a local flag of the production writes (AddDryRunFlag)
 }
 
 // Factory supplies each command's IO, config and API clients.
@@ -61,6 +62,10 @@ type Factory struct {
 	UsageCommand string
 
 	envBannerDone bool
+	// holdBanner and heldBanner keep the env banner of a production write confirmed by --yes until
+	// its "! live:" line, so that line comes first even when the command reads before its confirm.
+	holdBanner bool
+	heldBanner func()
 
 	// commandHost resolves the host the running command reaches; nil for a command that reaches none.
 	// It lets the env banner come before the command's first prompt.
@@ -77,6 +82,9 @@ type Factory struct {
 
 	// staleTokenRefresh records a refresh that never reached the OAuth host.
 	staleTokenRefresh error
+
+	// realRunRefusal is, during a dry run, the first confirm-gate refusal the real run would stop at.
+	realRunRefusal string
 
 	// keychainWarned keeps the "renewed token not saved" notice to one line per run.
 	keychainWarned bool
@@ -195,7 +203,11 @@ func New() *Factory {
 		if err := AssertCredentialHost(baseURL, source, baseURLForEnv(env)); err != nil {
 			return nil, err
 		}
-		f.printEnvBanner(f.IOStreams.ErrOut, env, source, "")
+		if f.holdBanner {
+			f.heldBanner = func() { f.printEnvBanner(f.IOStreams.ErrOut, env, source, "") }
+		} else {
+			f.printEnvBanner(f.IOStreams.ErrOut, env, source, "")
+		}
 
 		token := f.resolveToken()
 		if token == "" {
@@ -205,6 +217,7 @@ func New() *Factory {
 		client := api.NewClient(baseURL, token)
 		client.Reauth = f.renewRejectedToken
 		client.Logf = f.progressf
+		client.ReadOnly = f.Global.DryRun
 		return client, nil
 	}
 
@@ -421,18 +434,31 @@ func (f *Factory) ConfirmOut() io.Writer {
 	return f.promptOut()
 }
 
-// ConfirmProdWrite requires confirmation for a write on production; --yes skips the prompt, never OTP.
-func (f *Factory) ConfirmProdWrite(action string) error {
+// ConfirmProdWrite gates a write on production. target is the id of the one resource the command
+// names, or "" when it names none (a create). Past CheckProdWrite's refusals, --yes confirms, else a
+// terminal prompt defaulting to no. A dry run neither prompts
+// nor refuses: it records the refusal for would_refuse, and its client refuses the write itself.
+func (f *Factory) ConfirmProdWrite(action, target string) error {
 	if !f.isProductionTarget() {
 		return nil
 	}
 	// action may carry server or user text; an escape could rewrite the prompt.
 	action = jsonfmt.Clean(action)
+	if err := f.checkProdWrite(action, target); err != nil {
+		return f.RefuseUnlessDryRun(err)
+	}
+	if f.Global.DryRun {
+		return nil
+	}
 	// Under --json or -o yaml stderr carries only the error object, and --yes already confirmed.
 	if f.Global.Output != "json" && f.Global.Output != "yaml" {
 		fmt.Fprintf(f.ConfirmOut(), "! live: %s targets PRODUCTION\n", action)
 	}
-	ok, err := f.Confirm(fmt.Sprintf("%s on production?", action))
+	f.releaseEnvBanner()
+	if f.Global.Yes {
+		return nil
+	}
+	ok, err := f.AskYesNo(fmt.Sprintf("%s on production?", action), false)
 	if err != nil {
 		return err
 	}
@@ -440,6 +466,89 @@ func (f *Factory) ConfirmProdWrite(action string) error {
 		return &FlagError{Err: fmt.Errorf("%s cancelled", action)}
 	}
 	return nil
+}
+
+// CheckProdWrite refuses a production write ConfirmProdWrite would refuse, without prompting, so a
+// command can stop before the reads that precede its confirm. A dry run records the refusal instead.
+func (f *Factory) CheckProdWrite(action, target string) error {
+	if !f.isProductionTarget() {
+		return nil
+	}
+	if err := f.checkProdWrite(jsonfmt.Clean(action), target); err != nil {
+		return f.RefuseUnlessDryRun(err)
+	}
+	f.holdBanner = f.Global.Yes && !f.Global.DryRun
+	return nil
+}
+
+// releaseEnvBanner prints the env banner held for the "! live:" line, if any.
+func (f *Factory) releaseEnvBanner() {
+	f.holdBanner = false
+	if printBanner := f.heldBanner; printBanner != nil {
+		f.heldBanner = nil
+		printBanner()
+	}
+}
+
+// RefuseUnlessDryRun returns a confirm refusal, or during a dry run passes and keeps the first one,
+// the refusal the real run would stop at, for would_refuse.
+func (f *Factory) RefuseUnlessDryRun(err error) error {
+	if err == nil || !f.Global.DryRun {
+		return err
+	}
+	if f.realRunRefusal == "" {
+		f.realRunRefusal = err.Error()
+	}
+	return nil
+}
+
+// askUserToRun never names --yes: an agent told to pass it would confirm on the user's behalf.
+const askUserToRun = "ask the user to run this command in their own terminal"
+
+func (f *Factory) checkProdWrite(action, target string) error {
+	if f.Global.Env != config.EnvProduction {
+		return f.envMissingFromCommandLine(action)
+	}
+	if f.Global.Yes && strings.TrimSpace(target) == "" {
+		return &FlagError{Err: fmt.Errorf("%s names no single resource, so --yes cannot confirm it on production; %s", action, f.ReachTheConfirm())}
+	}
+	if !f.Global.Yes && !f.canPrompt() {
+		return &FlagError{Err: fmt.Errorf("%s on production needs confirmation; %s", action, f.ReachTheConfirm())}
+	}
+	return nil
+}
+
+// envMissingFromCommandLine names what made a write without --env production target production: the
+// stored default_env, or an API host that is not the sandbox host.
+func (f *Factory) envMissingFromCommandLine(action string) error {
+	if f.ActiveEnv() == config.EnvProduction {
+		if !f.IOStreams.CanPrompt() {
+			return &FlagError{Err: fmt.Errorf("%s targets production without --env production on the command line (default_env does not count); %s", action, askUserToRun)}
+		}
+		return &FlagError{Err: fmt.Errorf("%s targets production: add --env production to the command; default_env does not count", action)}
+	}
+	host, ok := f.resolvedAPIHost()
+	if !ok {
+		host = "an unparseable API host"
+	} else {
+		host = fmt.Sprintf("the API host %q", host)
+	}
+	if !f.IOStreams.CanPrompt() {
+		return &FlagError{Err: fmt.Errorf("%s targets production through %s, which is not the sandbox host; %s", action, host, askUserToRun)}
+	}
+	if f.Global.Env == config.EnvSandbox {
+		return &FlagError{Err: fmt.Errorf("%s targets production through %s, but --env sandbox was given: point it at the sandbox host", action, host)}
+	}
+	return &FlagError{Err: fmt.Errorf("%s targets production through %s, which is not the sandbox host: point it at the sandbox host, or add --env production to the command", action, host)}
+}
+
+// ReachTheConfirm tells a person at a terminal which flags keep the prompt away; without a
+// terminal only the user can confirm.
+func (f *Factory) ReachTheConfirm() string {
+	if !f.IOStreams.CanPrompt() {
+		return askUserToRun
+	}
+	return "run it without --yes, --json, -o yaml, --quiet or --no-input and answer the prompt"
 }
 
 // IdempotencyKey returns the --idempotency-key value, validated against the server's charset, or a fresh key.
@@ -456,15 +565,19 @@ func (f *Factory) IdempotencyKey() (string, error) {
 
 var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{8,255}$`)
 
-// ConfirmMutation is the confirmation gate every mutating command calls.
-func (f *Factory) ConfirmMutation(action string, destructive bool) error {
+// ConfirmMutation is the confirmation gate every mutating command calls; target is as for
+// ConfirmProdWrite. A dry run confirms nothing: it records what the real run would refuse.
+func (f *Factory) ConfirmMutation(action, target string, destructive bool) error {
 	if f.isProductionTarget() {
-		return f.ConfirmProdWrite(action)
+		return f.ConfirmProdWrite(action, target)
 	}
 	if !destructive {
 		return nil
 	}
 	action = jsonfmt.Clean(action)
+	if f.Global.DryRun {
+		return f.RefuseUnlessDryRun(f.unattendedConfirm(action + "?"))
+	}
 	ok, err := f.Confirm(action + "?")
 	if err != nil {
 		return err
@@ -747,7 +860,7 @@ func (f *Factory) BindCommand(cmd *cobra.Command) {
 		f.commandCallsCheckout = host == HostPGCheckout
 	case "einvoice":
 		f.commandHost, f.commandHostKey = f.einvoiceBaseURL, "EINVOICE_API_URL"
-	case "auth", "login", "logout", "config", "completion", "version", "sepay":
+	case "auth", "login", "logout", "config", "completion", "version", "update", "sepay":
 		f.commandHost = nil
 	default:
 		f.commandHost = f.apiBaseURL

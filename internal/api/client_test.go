@@ -419,3 +419,39 @@ func TestWithRequestID(t *testing.T) {
 	plain := errors.New("dial tcp")
 	assert.Equal(t, plain, WithRequestID(plain, h))
 }
+
+func TestReadOnly_RefusesEveryWriteBeforeConnecting(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"status":"success","data":{}}`)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "t")
+	c.ReadOnly = true
+	c.Reauth = func(context.Context, string) string {
+		t.Fatal("a refused write must not reach reauth")
+		return ""
+	}
+	ctx := context.Background()
+	opts := WriteOptions{Body: map[string]any{"a": 1}, IdempotencyKey: "key-12345678"} // gitleaks:allow
+
+	for name, send := range map[string]func() error{
+		"POST":            func() error { _, err := c.Post(ctx, "/x", opts); return err },
+		"PUT":             func() error { _, err := c.Put(ctx, "/x", opts); return err },
+		"DELETE":          func() error { _, err := c.Delete(ctx, "/x", opts); return err },
+		"PATCH":           func() error { _, err := c.Request(ctx, "PATCH", "/x", nil, opts); return err },
+		"lower-case post": func() error { _, err := c.Request(ctx, "post", "/x", nil, opts); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.ErrorIs(t, send(), ErrReadOnly)
+		})
+	}
+	assert.Zero(t, calls.Load(), "no write reaches the server, not even a retried one")
+
+	_, err := c.Get(ctx, "/x", nil)
+	require.NoError(t, err)
+	_, err = c.Request(ctx, http.MethodHead, "/x", nil, WriteOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), calls.Load(), "reads still go through")
+}

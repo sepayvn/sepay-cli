@@ -118,7 +118,7 @@ func TestIssue_PostsAccountVA(t *testing.T) {
 	assert.Contains(t, errOut.String(), "Issued virtual account SBSEPAYXYZ")
 }
 
-func TestIssue_JSONHasOtpAndVA(t *testing.T) {
+func TestIssue_JSONIsTheVA(t *testing.T) {
 	f, out, _ := testFactory(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"status":"success","data":{"otp_required":false,"id":"va_9","va":"SB1","label":"","active":"1","official":0,"static":1,"bank_account_id":"ba_1","created_at":"x","updated_at":null}}`))
@@ -126,7 +126,7 @@ func TestIssue_JSONHasOtpAndVA(t *testing.T) {
 	f.Global.Output = "json"
 	require.NoError(t, run(NewCmdVA(f), "issue", "--bank-account", "ba_1"))
 	s := out.String()
-	assert.Contains(t, s, `"otp_required": false`)
+	assert.NotContains(t, s, "otp_required")
 	assert.Contains(t, s, `"va": "SB1"`)
 	assert.Contains(t, s, `"active": 1`) // FlexInt string -> int
 }

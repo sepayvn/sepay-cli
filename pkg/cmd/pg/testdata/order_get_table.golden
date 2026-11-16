@@ -1,0 +1,13 @@
+Order code:   INV-A
+Pay code:     ORD-1
+Status:       CAPTURED
+Amount:       150.000 VND
+Customer:     CUST-1
+Description:  Order 1
+3-D Secure:   AUTHENTICATION_SUCCESSFUL
+Created:      2026-11-01 10:00:00
+Updated:      2026-11-01 10:00:00
+
+METHOD        TYPE           AMOUNT         STATUS          CARD                 DATE
+CARD          PAYMENT        100            APPROVED        -                    2026-11-01 10:01:02
+CARD          PAYMENT        150.000        APPROVED        VISA ****1234        2026-11-01 10:01:01

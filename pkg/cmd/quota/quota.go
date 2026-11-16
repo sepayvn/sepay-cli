@@ -34,12 +34,12 @@ type Line struct {
 	Used        int    `json:"used" yaml:"used"`
 	Limit       *int   `json:"limit,omitempty" yaml:"limit,omitempty"`
 	Remaining   *int   `json:"remaining,omitempty" yaml:"remaining,omitempty"`
-	Period      string `json:"period" yaml:"period"`
+	Period      string `json:"period,omitempty" yaml:"period,omitempty"`
 	Enforcement string `json:"enforcement,omitempty" yaml:"enforcement,omitempty"`
 }
 
 // quotaOrder fixes the table row order.
-var quotaOrder = []string{"transaction", "bank_account", "webhook", "api_key"}
+var quotaOrder = []string{"transaction", "einvoice", "bank_account", "webhook", "api_key"}
 
 // NewCmdQuota builds the "sepay quota" command.
 func NewCmdQuota(f *cmdutil.Factory) *cobra.Command {
@@ -47,8 +47,9 @@ func NewCmdQuota(f *cmdutil.Factory) *cobra.Command {
 		Use:   "quota",
 		Short: "Show your plan quota and usage",
 		Long: `Show how much of each quota your company has used. On production that is the
-plan's transaction quota for the current billing cycle (company admins only); on
-sandbox, the sandbox caps on transactions, bank accounts, webhooks and API keys.
+plan's transaction quota for the current billing cycle and its e-invoice quota
+(company admins only); on sandbox, the sandbox caps on transactions, bank
+accounts, webhooks and API keys.
 
 USED is counted over PERIOD: cycle (the plan's billing cycle, printed below the
 table), daily or total. LIMIT and REMAINING are "-" when the server sends no
@@ -58,7 +59,12 @@ figure. ENFORCEMENT says what happens at the limit:
   exempt     going over the limit does not stop transactions
   unlimited  the plan sets no limit
   unknown    the plan has no billing window, so usage cannot be measured
-  blocked    sandbox: a create past the limit fails with quota_exceeded`,
+  blocked    sandbox: a create past the limit fails with quota_exceeded
+
+On production, the einvoice row shows the e-invoices issued to date (USED) and
+the number your plan still lets you issue (REMAINING); it has no LIMIT, PERIOD
+or ENFORCEMENT. There is no einvoice row if your company has not bought an
+e-invoice plan.`,
 		Example: `  sepay quota
   sepay quota --env production --json`,
 		Args: cobra.NoArgs,
@@ -103,7 +109,7 @@ func runQuota(ctx context.Context, f *cmdutil.Factory) error {
 				strconv.Itoa(line.Used),
 				intOrDash(line.Limit),
 				intOrDash(line.Remaining),
-				line.Period,
+				jsonfmt.OrDash(line.Period),
 				jsonfmt.OrDash(line.Enforcement),
 			)
 		}

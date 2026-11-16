@@ -11,13 +11,17 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/sepayvn/sepay-cli/internal/api"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
 	"github.com/sepayvn/sepay-cli/pkg/jsonfmt"
 
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v3"
 )
 
 // NewCmdAPI builds the "sepay api" command.
@@ -32,7 +36,9 @@ hatch for endpoints without a dedicated command.
 <path> is relative to the active environment's API base (e.g. /transactions).
 On GET, --field values are sent as query parameters; on a write method they form
 a JSON body. A --field value that is valid JSON (42, true, [1,2]) is sent typed,
-otherwise as a string; use --input for a full raw body.`,
+otherwise as a string; use --input for a full raw body.
+
+In sandbox, -X DELETE prompts before it is sent; other methods do not.`,
 		Example: `  sepay api /transactions
   sepay api /transactions -f per_page=5
   sepay api /webhooks -X POST -f url=https://example.com/hook -f is_verify_payment=true
@@ -47,7 +53,10 @@ otherwise as a string; use --input for a full raw body.`,
 	fl.StringArrayP("field", "f", nil, "Add a body field (key=value, repeatable)")
 	fl.StringArrayP("header", "H", nil, "Add a request header (repeatable)")
 	fl.String("input", "", "Read the request body from a file, or - for stdin")
+	cmdutil.AddDryRunFlag(cmd, f)
+	fl.Lookup("dry-run").Usage = "Print the request without sending it, a GET included"
 	return cmdutil.Annotate(cmd, map[string]string{
+		cmdutil.AnnConfirms: "sandbox=conditional,production=terminal",
 		cmdutil.AnnGuidance: "This bypasses every per-command guard: -X POST|PUT|DELETE reaches any endpoint, including ones whose dedicated command refuses production. Prefer the dedicated command when one exists.",
 	})
 }
@@ -94,7 +103,7 @@ func runAPI(cmd *cobra.Command, f *cmdutil.Factory, endpoint string) error {
 	}
 
 	if !isRead {
-		if err := f.ConfirmMutation(fmt.Sprintf("api %s %s", method, endpoint), method == http.MethodDelete); err != nil {
+		if err := f.ConfirmMutation(fmt.Sprintf("api %s %s", method, actionEndpoint(endpoint)), namedResource(endpoint), method == http.MethodDelete); err != nil {
 			return err
 		}
 	}
@@ -113,11 +122,234 @@ func runAPI(cmd *cobra.Command, f *cmdutil.Factory, endpoint string) error {
 	if err := rejectDuplicateBasePath(client.BaseURL(), endpoint); err != nil {
 		return err
 	}
+	if f.Global.DryRun {
+		return dryRun(f, client.BaseURL(), method, endpoint, query, opts)
+	}
 	env, err := client.Request(cmd.Context(), method, endpoint, query, opts)
 	if err != nil {
 		return err
 	}
 	return printResponse(f, env)
+}
+
+// dryRun prints the request without sending it, reads included: the target as client.Request
+// builds it, the headers -H sets by name only, once per value sent, and every credential-named
+// query value and body key masked. The headers the client adds itself (Authorization,
+// X-Idempotency-Key, the version pin) are left out.
+func dryRun(f *cmdutil.Factory, baseURL, method, endpoint string, query url.Values, opts api.WriteOptions) error {
+	target := endpoint
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	// The real run fails here too, before anything is sent.
+	if _, err := url.Parse(baseURL + target); err != nil {
+		return err
+	}
+	// A fragment never leaves the client, and whatever follows "#" goes with it.
+	target, _, _ = strings.Cut(target, "#")
+	reqPath, rawQuery, _ := strings.Cut(target, "?")
+	var names []string
+	for name, values := range opts.Header {
+		for range values {
+			names = append(names, http.CanonicalHeaderKey(name))
+		}
+	}
+	slices.Sort(names)
+	body, err := maskedBody(opts.Body, f.Global.Output == "yaml")
+	if err != nil {
+		return err
+	}
+	return f.RenderDryRunRequest(cmdutil.DryRunRequest{
+		Method: method, Path: reqPath, Query: maskedQuery(rawQuery), Headers: names, Body: body,
+	})
+}
+
+// maskedQuery masks the value of each credential-named parameter, keeping the rest byte for byte.
+// "&", ";" and a second "?" all start a parameter: a path's own query and the -f fields join as
+// "a=1?b=2", and a server may split on ";". A masked value runs to the next "&", since a server
+// splitting on "&" alone reads it that far. An empty value stays empty: it clears, not sets.
+func maskedQuery(raw string) string {
+	var b strings.Builder
+	for raw != "" {
+		param, sep := raw, ""
+		if i := strings.IndexAny(raw, "&;?"); i >= 0 {
+			param, sep, raw = raw[:i], raw[i:i+1], raw[i+1:]
+		} else {
+			raw = ""
+		}
+		k, v, hasValue := strings.Cut(param, "=")
+		name, err := url.QueryUnescape(k)
+		if err != nil {
+			name = k
+		}
+		if hasValue && credentialKey(name) {
+			if sep != "" && sep != "&" {
+				rest, after, found := strings.Cut(raw, "&")
+				v += sep + rest
+				sep, raw = "", after
+				if found {
+					sep = "&"
+				}
+			}
+			if v != "" {
+				param = k + "=***"
+			} else {
+				param = k + "="
+			}
+		}
+		b.WriteString(param)
+		b.WriteString(sep)
+	}
+	return b.String()
+}
+
+// maskedBody is the body as the client encodes it, from -f fields or --input alike, with the value
+// of every credential-named key masked at any depth. Numbers keep the digits sent, under YAML too,
+// as plain scalars.
+func maskedBody(body any, forYAML bool) (any, error) {
+	if body == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var decoded any
+	if err := dec.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	if forYAML {
+		decoded = mapNumbers(decoded, func(n json.Number) any {
+			return &yaml.Node{Kind: yaml.ScalarNode, Value: n.String()}
+		})
+	}
+	return maskCredentials(decoded), nil
+}
+
+func maskCredentials(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			// An empty or null credential clears one: "***" would read as a secret being set.
+			if credentialKey(k) && e != nil && e != "" {
+				out[k] = "***"
+				continue
+			}
+			out[k] = maskCredentials(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = maskCredentials(e)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// credentialWords name a secret when one is a whole word of a key.
+var credentialWords = []string{
+	"secret", "password", "passwd", "passcode", "pass", "pin", "otp", "totp", "hotp",
+	"credential", "credentials", "authorization", "cookie", "apikey", "pwd",
+	"jwt", "bearer", "signature", "cvv", "refresh",
+}
+
+// credentialKey reports a key naming a secret: a word of credentialWords in any part, a last part
+// "token" or "key" after another word (access_token, accessToken, api-key, subscriber_key), "key"
+// alone, one word ending in "token" (token, accesstoken), or mat_khau in any spelling. Masking too
+// much only hides a value from the preview; too little prints a secret.
+func credentialKey(key string) bool {
+	words := keyWords(key)
+	for _, w := range words {
+		if slices.Contains(credentialWords, w) {
+			return true
+		}
+	}
+	joined := strings.Join(words, "")
+	for _, w := range []string{"secret", "password", "apikey", "credential", "matkhau"} {
+		if strings.Contains(joined, w) {
+			return true
+		}
+	}
+	n := len(words)
+	return n > 1 && (words[n-1] == "token" || words[n-1] == "key") || n == 1 && (words[0] == "key" || strings.HasSuffix(words[0], "token"))
+}
+
+// keyWords splits a key into lower-case words at separators and camelCase humps.
+func keyWords(key string) []string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	runes := []rune(key)
+	for i, r := range runes {
+		switch {
+		case !unicode.IsLetter(r) && !unicode.IsDigit(r):
+			flush()
+		case unicode.IsUpper(r) && i > 0 && (unicode.IsLower(runes[i-1]) || i+1 < len(runes) && unicode.IsLower(runes[i+1])):
+			flush()
+			cur = append(cur, r)
+		default:
+			cur = append(cur, r)
+		}
+	}
+	flush()
+	return words
+}
+
+// resourceID is the named-resource form of the production write rule: a UUID or a number.
+var resourceID = regexp.MustCompile(`^(?i:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9]+)$`)
+
+// namedResource returns reqPath when its last segment is a resource id, else "": a production write
+// accepts --yes only when it names the resource it changes. A parent id does not count, since
+// POST /bank-accounts/<id>/orders writes a new resource under it.
+func namedResource(reqPath string) string {
+	p := reqPath
+	if i := strings.IndexAny(p, "?#"); i >= 0 {
+		p = p[:i]
+	}
+	p = strings.TrimRight(p, "/")
+	if resourceID.MatchString(p[strings.LastIndex(p, "/")+1:]) {
+		return p
+	}
+	return ""
+}
+
+// actionEndpoint is endpoint as the confirmation prompt and the refusals print it: a query value
+// may be a credential, so each one, and any parameter without "=", becomes ***. So does the
+// userinfo of a pasted URL, which the confirm prints before rejectAbsoluteURL refuses it. The
+// fragment is never sent, so it is dropped.
+func actionEndpoint(endpoint string) string {
+	endpoint, _, _ = strings.Cut(endpoint, "#")
+	p, rawQuery, ok := strings.Cut(endpoint, "?")
+	if looksLikeURL(p) || looksLikeURL(strings.TrimPrefix(p, "/")) {
+		authStart := strings.Index(p, "//") + 2
+		authority, _, _ := strings.Cut(p[authStart:], "/")
+		if at := strings.LastIndex(authority, "@"); at >= 0 {
+			p = p[:authStart] + "***" + p[authStart+at:]
+		}
+	}
+	if !ok {
+		return p
+	}
+	params := strings.FieldsFunc(rawQuery, func(r rune) bool { return r == '&' || r == ';' })
+	for i, kv := range params {
+		if k, _, hasValue := strings.Cut(kv, "="); hasValue {
+			params[i] = k + "=***"
+		} else {
+			params[i] = "***"
+		}
+	}
+	return p + "?" + strings.Join(params, "&")
 }
 
 // looksLikeURL reports a scheme or "//host" prefix; anchored, so a URL in a query value is fine.
@@ -363,7 +595,7 @@ func printResponse(f *cmdutil.Factory, env *api.Envelope) error {
 		if err := dec.Decode(&generic); err != nil {
 			return err
 		}
-		return jsonfmt.RenderYAML(f.IOStreams.Out, settleNumbers(generic))
+		return jsonfmt.RenderYAML(f.IOStreams.Out, mapNumbers(generic, settleNumber))
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, raw, "", "  "); err != nil {
@@ -374,28 +606,33 @@ func printResponse(f *cmdutil.Factory, env *api.Envelope) error {
 	return err
 }
 
-// settleNumbers resolves each json.Number to int64 when whole and in range, else float64.
-func settleNumbers(v any) any {
+// mapNumbers replaces each json.Number in a generic decode with leaf(n).
+func mapNumbers(v any, leaf func(json.Number) any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, e := range t {
-			t[k] = settleNumbers(e)
+			t[k] = mapNumbers(e, leaf)
 		}
 		return t
 	case []any:
 		for i, e := range t {
-			t[i] = settleNumbers(e)
+			t[i] = mapNumbers(e, leaf)
 		}
 		return t
 	case json.Number:
-		if i, err := t.Int64(); err == nil {
-			return i
-		}
-		if f, err := t.Float64(); err == nil {
-			return f
-		}
-		return t.String()
+		return leaf(t)
 	default:
 		return v
 	}
+}
+
+// settleNumber resolves a json.Number to int64 when whole and in range, else float64.
+func settleNumber(n json.Number) any {
+	if i, err := n.Int64(); err == nil {
+		return i
+	}
+	if f, err := n.Float64(); err == nil {
+		return f
+	}
+	return n.String()
 }

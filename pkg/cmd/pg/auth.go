@@ -26,7 +26,7 @@ func newAuthCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:   "auth",
 		Short: "Show or refresh the sandbox Payment Gateway credential",
 		Long: "Mint (or reuse) the sandbox Payment Gateway credential via the SePay broker.\n" +
-			"Order and merchant commands mint it automatically; run this to inspect it,\n" +
+			"Order and merchant commands other than order list and get mint it automatically; run this to inspect it,\n" +
 			"pre-warm CI, or force a refresh. The secret is never printed.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

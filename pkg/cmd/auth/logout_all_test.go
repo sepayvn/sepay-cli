@@ -15,6 +15,13 @@ import (
 
 	"github.com/sepayvn/sepay-cli/internal/auth"
 	"github.com/sepayvn/sepay-cli/pkg/cmdutil"
+	"github.com/sepayvn/sepay-cli/pkg/cmdutil/prompttest"
+)
+
+const (
+	logoutAllPrompt      = "log out of EVERY stored profile (and revoke each account's sessions)?"
+	logoutAllLocalPrompt = "remove EVERY stored profile from this machine (their sessions stay live)?"
+	revokeAllPrompt      = "revoke EVERY session of the account (all devices/CI)?"
 )
 
 // grantServer is a stateful OAuth host: it rotates refresh tokens and revoke-all kills every token.
@@ -109,7 +116,7 @@ func seedAccount(t *testing.T, f *cmdutil.Factory, name, email string, exp time.
 func TestLogoutAll_ExpiredAccessRefreshesThenRevokesEverySession(t *testing.T) {
 	srv := newGrantServer(t, map[string]string{"rt_work": "", "rt_m2": "at_m2"})
 	f, _, out, errOut := testFactory(t, srv.URL)
-	f.Global.Yes = true
+	prompttest.Use(t, f, prompttest.Step{Label: logoutAllPrompt, Answer: true})
 	seedAccount(t, f, "work", "a@x.vn", time.Now().Add(-time.Minute))
 
 	require.NoError(t, run(NewCmdLogout(f), "--all"))
@@ -125,7 +132,7 @@ func TestLogoutAll_ExpiredAccessRefreshesThenRevokesEverySession(t *testing.T) {
 func TestLogoutAll_RevokeFailureRevokesOwnGrantAndExitsNonZero(t *testing.T) {
 	srv := newGrantServer(t, map[string]string{"rt_work": "", "rt_m2": "at_m2"})
 	f, _, out, errOut := testFactory(t, srv.URL)
-	f.Global.Yes = true
+	prompttest.Use(t, f, prompttest.Step{Label: logoutAllPrompt, Answer: true})
 	seedAccount(t, f, "work", "a@x.vn", time.Now().Add(30*time.Minute))
 
 	err := run(NewCmdLogout(f), "--all")
@@ -146,7 +153,7 @@ func TestLogoutAll_RevokeFailureRevokesOwnGrantAndExitsNonZero(t *testing.T) {
 func TestLogoutAll_OfflineKeepsTheCredential(t *testing.T) {
 	srv := newGrantServer(t, nil)
 	f, _, out, _ := testFactory(t, srv.URL)
-	f.Global.Yes = true
+	prompttest.Use(t, f, prompttest.Step{Label: logoutAllPrompt, Answer: true})
 	seedAccount(t, f, "work", "a@x.vn", time.Now().Add(30*time.Minute))
 	srv.Close()
 
@@ -162,7 +169,7 @@ func TestLogoutAll_OfflineKeepsTheCredential(t *testing.T) {
 func TestLogoutAll_SameAccountRevokesOnce(t *testing.T) {
 	srv := newGrantServer(t, map[string]string{"rt_work": "at_work", "rt_ci": "at_ci"})
 	f, _, out, errOut := testFactory(t, srv.URL)
-	f.Global.Yes = true
+	prompttest.Use(t, f, prompttest.Step{Label: logoutAllPrompt, Answer: true})
 	future := time.Now().Add(30 * time.Minute)
 	seedAccount(t, f, "work", "a@x.vn", future)
 	seedAccount(t, f, "ci", "a@x.vn", future)
@@ -250,4 +257,77 @@ func TestLogoutAll_JSONReportsEachProfile(t *testing.T) {
 	mgr, _ := f.Credentials()
 	assert.NotContains(t, mgr.Hosts().Profiles, "good")
 	assert.Contains(t, mgr.Hosts().Profiles, "bad")
+}
+
+func TestLogoutAll_UnattendedWithoutYesSendsNothing(t *testing.T) {
+	srv := newGrantServer(t, map[string]string{"rt_good": "at_good"})
+	f, _, out, _ := testFactory(t, srv.URL)
+	f.Global.Output = "json"
+	seedAccount(t, f, "good", "a@x.vn", time.Now().Add(30*time.Minute))
+	seedAccount(t, f, "other", "b@x.vn", time.Now().Add(30*time.Minute))
+
+	err := run(NewCmdLogout(f), "--all")
+	require.Error(t, err)
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.Contains(t, err.Error(), "requires confirmation; pass --yes")
+	assert.Zero(t, srv.count("revoke")+srv.count("revoke-all")+srv.count("refresh"))
+	assert.Empty(t, out.String())
+	mgr, _ := f.Credentials()
+	assert.Contains(t, mgr.Hosts().Profiles, "good")
+	assert.Contains(t, mgr.Hosts().Profiles, "other")
+}
+
+func TestLogoutAll_NoKeepsEverySession(t *testing.T) {
+	srv := newGrantServer(t, map[string]string{"rt_work": "at_work"})
+	f, _, out, _ := testFactory(t, srv.URL)
+	seedAccount(t, f, "work", "a@x.vn", time.Now().Add(30*time.Minute))
+	prompttest.Use(t, f, prompttest.Step{Label: logoutAllPrompt, Answer: false})
+
+	err := run(NewCmdLogout(f), "--all")
+	require.Error(t, err)
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+	assert.Contains(t, err.Error(), "logout --all cancelled")
+	assert.Zero(t, srv.count("revoke")+srv.count("revoke-all")+srv.count("refresh"))
+	assert.True(t, srv.alive("rt_work"))
+	assert.NotContains(t, out.String(), "Logged out")
+	mgr, _ := f.Credentials()
+	assert.Contains(t, mgr.Hosts().Profiles, "work")
+}
+
+// --all --local sends nothing, so it keeps the sandbox confirm: --yes or a yes on a terminal.
+func TestLogoutAll_LocalRemovesEveryProfileWithoutRevoking(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		yes     bool
+		answer  any
+		removed bool
+	}{
+		{"--yes", true, nil, true},
+		{"terminal y", false, true, true},
+		{"terminal n", false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newGrantServer(t, map[string]string{"rt_work": "at_work", "rt_home": "at_home"})
+			f, _, _, _ := testFactory(t, srv.URL)
+			seedAccount(t, f, "work", "a@x.vn", time.Now().Add(30*time.Minute))
+			seedAccount(t, f, "home", "b@x.vn", time.Now().Add(30*time.Minute))
+			f.Global.Yes = tc.yes
+			if tc.answer != nil {
+				prompttest.Use(t, f, prompttest.Step{Label: logoutAllLocalPrompt, Answer: tc.answer})
+			}
+
+			err := run(NewCmdLogout(f), "--all", "--local")
+			assert.Zero(t, srv.count("revoke")+srv.count("revoke-all")+srv.count("refresh"), "--local sends nothing")
+			mgr, _ := f.Credentials()
+			if !tc.removed {
+				require.Error(t, err)
+				assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+				assert.Len(t, mgr.Hosts().Profiles, 2)
+				return
+			}
+			require.NoError(t, err)
+			assert.Empty(t, mgr.Hosts().Profiles)
+			assert.True(t, srv.alive("rt_work"), "the session stays live")
+		})
+	}
 }

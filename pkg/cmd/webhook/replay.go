@@ -2,8 +2,11 @@ package webhook
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -135,9 +138,8 @@ refused unless you pass --force and type the transaction id back; and SePay
 caps how often one transaction is replayed, saying when to try again. Reading
 the transaction and its last delivery needs the "read" scope on production,
 besides "webhook:write".`,
-		Example: `  sepay webhook replay <transaction-id> --webhook <webhook-xid>
-  sepay webhook replay <transaction-id> --webhook <webhook-xid> --env production`,
-		Args: cobra.MaximumNArgs(1),
+		Example: `  sepay webhook replay <transaction-id> --webhook <webhook-xid>`,
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
 				if transactionID != "" {
@@ -151,16 +153,22 @@ besides "webhook:write".`,
 					return &cmdutil.FlagError{Err: fmt.Errorf("--%s needs a value", flag)}
 				}
 			}
-			// Before any lookup: a forced production replay is a terminal-only action.
+			if err := f.CheckProdWrite("replay a webhook delivery", transactionID); err != nil {
+				return err
+			}
+			// Before any lookup: a forced production replay is a terminal-only action. A dry run
+			// previews one anywhere, and names this refusal when the production rule let it through.
 			production := f.IsProductionTarget()
 			if force && production && !f.CanPrompt() {
-				return &cmdutil.FlagError{Err: errors.New("--force on production must be confirmed on a terminal; --yes does not confirm it")}
+				if err := f.RefuseUnlessDryRun(&cmdutil.FlagError{Err: fmt.Errorf("--force on production must be confirmed on a terminal, and --yes does not confirm it; %s", f.ReachTheConfirm())}); err != nil {
+					return err
+				}
 			}
 			target, err := resolveReplayTarget(cmd.Context(), f, transactionID, webhookXID)
 			if err != nil {
 				return err
 			}
-			if production {
+			if production && !f.Global.DryRun {
 				if err := previewProductionReplay(cmd.Context(), f, target); err != nil {
 					return err
 				}
@@ -172,9 +180,10 @@ besides "webhook:write".`,
 	fl.StringVar(&transactionID, "transaction", "", "Transaction id of the delivery (same as the argument)")
 	fl.StringVar(&webhookXID, "webhook", "", "Webhook xid of the delivery")
 	fl.BoolVar(&force, "force", false, "Replay a delivery the handler already acknowledged")
+	cmdutil.AddDryRunFlag(cmd, f)
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnScope:    "webhook:write",
-		cmdutil.AnnConfirms: "always",
+		cmdutil.AnnConfirms: "sandbox=always,production=terminal",
 	})
 }
 
@@ -189,46 +198,97 @@ func previewProductionReplay(ctx context.Context, f *cmdutil.Factory, target rep
 	if err != nil {
 		return err
 	}
-	txSeg, err := cmdutil.PathSegment("transaction id", target.TransactionID)
+	p, err := readReplayPreview(ctx, client, target)
 	if err != nil {
 		return err
+	}
+	p.print(f, out)
+	cmdutil.Fprintf(out, "%s\n", doubleCreditWarning)
+	return nil
+}
+
+const doubleCreditWarning = "! a handler that does not dedupe may credit this order twice"
+
+// replayPreview is what a replay re-sends: the transaction, its amount, and its last delivery.
+type replayPreview struct {
+	TransactionID string `json:"transaction_id" yaml:"transaction_id"`
+	Amount        string `json:"amount" yaml:"amount"`
+	SentTo        string `json:"sent_to" yaml:"sent_to"`
+	LastResult    string `json:"last_result" yaml:"last_result"`
+
+	tx transaction.Transaction
+}
+
+func readReplayPreview(ctx context.Context, client *api.Client, target replayTarget) (replayPreview, error) {
+	txSeg, err := cmdutil.PathSegment("transaction id", target.TransactionID)
+	if err != nil {
+		return replayPreview{}, err
 	}
 	env, err := client.Get(ctx, "/transactions/"+txSeg, nil)
 	if err != nil {
-		return err
+		return replayPreview{}, err
 	}
 	tx, err := api.DataInto[transaction.Transaction](env)
 	if err != nil {
-		return err
+		return replayPreview{}, err
 	}
 	env, err = client.Get(ctx, "/webhook-logs", url.Values{
 		"transaction_id": {target.TransactionID}, "webhook_xid": {target.WebhookXID}, "per_page": {"1"},
 	})
 	if err != nil {
-		return err
+		return replayPreview{}, err
 	}
 	logs, _, err := api.ListInto[Log](env)
 	if err != nil {
-		return err
+		return replayPreview{}, err
 	}
 
-	sentTo, last := "-", "-"
+	p := replayPreview{TransactionID: target.TransactionID, Amount: transaction.SignedAmountText(tx), SentTo: "-", LastResult: "-", tx: tx}
 	if len(logs) > 0 {
 		l := logs[0]
-		sentTo = l.urlLabel()
-		last = fmt.Sprintf("%s · HTTP %s · %s", l.Status, intOrDash(l.ResponseStatusCode), l.CreatedAt)
+		p.SentTo = l.urlLabel()
+		p.LastResult = fmt.Sprintf("%s · HTTP %s · %s", l.Status, intOrDash(l.ResponseStatusCode), l.CreatedAt)
 	}
-	cmdutil.Fprintf(out, "Transaction  %s\n", target.TransactionID)
-	cmdutil.Fprintf(out, "Amount       %s\n", transaction.SignedAmount(f, tx))
-	cmdutil.Fprintf(out, "Sent to      %s\n", sentTo)
-	cmdutil.Fprintf(out, "Last result  %s\n", last)
-	cmdutil.Fprintf(out, "! a handler that does not dedupe may credit this order twice\n")
-	return nil
+	return p, nil
+}
+
+func (p replayPreview) print(f *cmdutil.Factory, out io.Writer) {
+	cmdutil.Fprintf(out, "Transaction  %s\n", p.TransactionID)
+	cmdutil.Fprintf(out, "Amount       %s\n", transaction.SignedAmount(f, p.tx))
+	cmdutil.Fprintf(out, "Sent to      %s\n", p.SentTo)
+	cmdutil.Fprintf(out, "Last result  %s\n", p.LastResult)
+}
+
+// dryRunReplay shows the delivery a replay would re-send.
+func dryRunReplay(ctx context.Context, f *cmdutil.Factory, client *api.Client, req replayRequest, production bool) error {
+	p, err := readReplayPreview(ctx, client, req.replayTarget)
+	if err != nil {
+		return err
+	}
+	// The body as JSON sends it: replayRequest embeds an unexported type YAML cannot encode.
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return err
+	}
+	return f.RenderDryRun(cmdutil.DryRun{
+		Request: cmdutil.DryRunRequest{Method: http.MethodPost, Path: "/webhook-logs/replay", Body: body},
+		Before:  p,
+	}, func() error {
+		p.print(f, f.IOStreams.Out)
+		if production {
+			f.ErrPrintf("%s\n", doubleCreditWarning)
+		}
+		return nil
+	})
 }
 
 func runReplay(ctx context.Context, f *cmdutil.Factory, req replayRequest, production bool) error {
 	action := fmt.Sprintf("replay transaction %s to webhook %s", req.TransactionID, req.WebhookXID)
-	if err := f.ConfirmMutation(action, true); err != nil {
+	if err := f.ConfirmMutation(action, req.TransactionID, true); err != nil {
 		return err
 	}
 	if req.Force && production {
@@ -244,6 +304,9 @@ func runReplay(ctx context.Context, f *cmdutil.Factory, req replayRequest, produ
 	key, err := f.IdempotencyKey()
 	if err != nil {
 		return err
+	}
+	if f.Global.DryRun {
+		return dryRunReplay(ctx, f, client, req, production)
 	}
 	env, err := client.Post(ctx, "/webhook-logs/replay", api.WriteOptions{Body: req, IdempotencyKey: key})
 	if err != nil {

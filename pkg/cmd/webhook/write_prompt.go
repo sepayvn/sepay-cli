@@ -113,7 +113,7 @@ func targetingSummary(w Webhook) string {
 func anyWriteFlagChanged(cmd *cobra.Command) bool {
 	changed := false
 	cmd.LocalFlags().VisitAll(func(fl *pflag.Flag) {
-		if fl.Changed && fl.Name != "help" {
+		if fl.Changed && fl.Name != "help" && fl.Name != "dry-run" {
 			changed = true
 		}
 	})

@@ -75,7 +75,7 @@ func writeCommandMap(w io.Writer, root *cobra.Command, f *cmdutil.Factory, forma
 		writeTree(w, root, "")
 		return nil
 	case "paths":
-		for _, c := range collect(root, true) {
+		for _, c := range collect(root, true, f.ActiveEnv()) {
 			fmt.Fprintln(w, c.Path)
 		}
 		return nil
@@ -87,7 +87,7 @@ func writeCommandMap(w io.Writer, root *cobra.Command, f *cmdutil.Factory, forma
 			ActiveEnv:     f.ActiveEnv(),
 			Authenticated: loggedIn,
 			ActiveProfile: profile,
-			Commands:      collect(root, false),
+			Commands:      collect(root, false, f.ActiveEnv()),
 		})
 	}
 	return &cmdutil.FlagError{Err: fmt.Errorf(
@@ -105,11 +105,11 @@ func writeTree(w io.Writer, cmd *cobra.Command, indent string) {
 	}
 }
 
-func collect(cmd *cobra.Command, runnableOnly bool) []commandInfo {
+func collect(cmd *cobra.Command, runnableOnly bool, env string) []commandInfo {
 	var out []commandInfo
 	for _, c := range children(cmd, runnableOnly) {
-		out = append(out, describe(c))
-		out = append(out, collect(c, runnableOnly)...)
+		out = append(out, describe(c, env))
+		out = append(out, collect(c, runnableOnly, env)...)
 	}
 	return out
 }
@@ -128,7 +128,8 @@ func children(cmd *cobra.Command, runnableOnly bool) []*cobra.Command {
 	return out
 }
 
-func describe(cmd *cobra.Command) commandInfo {
+// describe gives confirms for env, so an agent reads one word, never the per-env annotation.
+func describe(cmd *cobra.Command, env string) commandInfo {
 	info := commandInfo{
 		Path:        cmd.CommandPath(),
 		Short:       cmd.Short,
@@ -136,7 +137,7 @@ func describe(cmd *cobra.Command) commandInfo {
 		Implemented: cmdutil.Annotation(cmd, cmdutil.AnnImplemented) != "no",
 		Envs:        cmdutil.Annotation(cmd, cmdutil.AnnEnvs),
 		Destructive: cmdutil.Annotation(cmd, cmdutil.AnnDestructive),
-		Confirms:    cmdutil.Annotation(cmd, cmdutil.AnnConfirms),
+		Confirms:    cmdutil.ConfirmsIn(cmd, env),
 		Scope:       cmdutil.Annotation(cmd, cmdutil.AnnScope),
 		Guidance:    cmdutil.Annotation(cmd, cmdutil.AnnGuidance),
 	}

@@ -171,6 +171,7 @@ jobs:
             dist/*.sbom.json
             dist/checksums.txt
             scripts/install.sh
+            scripts/install.ps1
 
       # Hand dist/ to the npm job. NOT `gh release download`: what Releases serves has
       # no artifacts.json / metadata.json, so the npm job would have to parse filenames

@@ -105,7 +105,7 @@ func TestLogin_DefaultScopesAreCapabilities(t *testing.T) {
 
 	require.NoError(t, run(NewCmdLogin(f)))
 
-	assert.Equal(t, "read webhook:write bank-account:write paycode:write", srv.deviceScopeValue())
+	assert.Equal(t, "read webhook:write bank-account:write paycode:write pg:read einvoice:read", srv.deviceScopeValue())
 	assert.NotContains(t, srv.deviceScopeValue(), "sandbox")
 }
 
@@ -344,7 +344,7 @@ func TestLogin_WithToken_RefusesATerminal(t *testing.T) {
 
 // The consent screen renders the intersection with PRODUCTION_ACTIONS, so an unlisted scope can never be granted.
 func TestKnownScopes_AreServerProductionActions(t *testing.T) {
-	productionActions := []string{"read", "webhook:write", "bank-account:write", "paycode:write", "va:write", "order:write", "refund:write"}
+	productionActions := []string{"read", "webhook:write", "bank-account:write", "paycode:write", "va:write", "order:write", "refund:write", "pg:read", "einvoice:read"}
 
 	for _, s := range knownScopes {
 		assert.Contains(t, productionActions, s, "the server does not grant %q", s)
@@ -352,4 +352,6 @@ func TestKnownScopes_AreServerProductionActions(t *testing.T) {
 	assert.NotContains(t, knownScopes, "va:write")
 	assert.NotContains(t, knownScopes, "order:write")
 	assert.NotContains(t, knownScopes, "refund:write")
+	assert.Contains(t, knownScopes, "pg:read", "pg order list/get need it on production")
+	assert.Contains(t, knownScopes, "einvoice:read", "einvoice invoice list/get need it on production")
 }

@@ -110,7 +110,8 @@ func TestReplay_ProductionUnattendedSkipsTheReadsItCannotUse(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
-	assert.Contains(t, err.Error(), "pass --yes")
+	assert.Contains(t, err.Error(), "ask the user to run this command in their own terminal")
+	assert.NotContains(t, err.Error(), "--yes")
 	assert.Zero(t, reads)
 }
 
@@ -170,6 +171,37 @@ func TestReplay_ForceOnProductionNeedsATerminalEvenWithYes(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 			assert.Contains(t, err.Error(), "--yes does not confirm it")
+			assert.Contains(t, err.Error(), "ask the user to run this command in their own terminal")
+			assert.Empty(t, srv.reads, "refused before any request")
+			assert.Empty(t, srv.posts)
+		})
+	}
+}
+
+// At a terminal the user is already there, so the refusal names the flags that keep the prompt away.
+func TestReplay_ForceOnProductionAtATerminalNamesTheFlagsToDrop(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*cmdutil.GlobalOptions)
+	}{
+		{"json", func(g *cmdutil.GlobalOptions) { g.Yes, g.Output = true, "json" }},
+		{"quiet", func(g *cmdutil.GlobalOptions) { g.Yes, g.Quiet = true, true }},
+		{"no-input", func(g *cmdutil.GlobalOptions) { g.Yes, g.NoInput = true, true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &replayServer{}
+			f, _, _ := testFactory(t, srv.handler(http.StatusOK, replayOK))
+			f.IOStreams.SetStdinTTY(true)
+			f.IOStreams.SetStdoutTTY(true)
+			f.Global.Env = config.EnvProduction
+			tc.set(f.Global)
+
+			err := run(NewCmdWebhook(f), "replay", "tx-1", "--webhook", "wh-1", "--force")
+
+			require.Error(t, err)
+			assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+			assert.Contains(t, err.Error(), "--yes does not confirm it; run it without --yes, --json, -o yaml, --quiet or --no-input")
+			assert.NotContains(t, err.Error(), "ask the user")
 			assert.Empty(t, srv.reads, "refused before any request")
 			assert.Empty(t, srv.posts)
 		})

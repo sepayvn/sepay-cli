@@ -27,6 +27,7 @@ sepay <command> <subcommand> [flags]
 | Homebrew (macOS, Linux) | `brew install sepayvn/sepay-cli/sepay` |
 | Scoop (Windows) | `scoop bucket add sepay https://github.com/sepayvn/scoop-sepay-cli` rồi `scoop install sepay/sepay` |
 | Script (macOS, Linux) | `curl -fsSL https://get.sepay.vn/sepay-cli-install.sh \| sh` |
+| Script (Windows, PowerShell) | `irm https://get.sepay.vn/sepay-cli-install.ps1 \| iex` |
 | npm | `npm i -g sepay-cli` |
 | Go | `go install github.com/sepayvn/sepay-cli/cmd/sepay@latest` |
 | Tải thủ công | archive cho từng nền tảng ở [GitHub Releases](https://github.com/sepayvn/sepay-cli/releases) |
@@ -35,6 +36,23 @@ Script cài đặt kiểm tra SHA-256 của archive với `checksums.txt`, và k
 của `checksums.txt` khi máy có `cosign`; `SEPAY_REQUIRE_SIGNATURE=1` từ chối cài khi không có
 `cosign`. `SEPAY_VERSION` (hoặc `--version`) chọn phiên bản, `SEPAY_INSTALL_DIR` (hoặc `--dir`)
 chọn thư mục cài (mặc định `$HOME/.local/bin`).
+
+Khi thư mục cài chưa có trong PATH, script thêm một khối có dấu mốc (`# >>> sepay-cli PATH >>>` …
+`# <<< sepay-cli PATH <<<`) vào cuối file khởi động của shell bạn dùng (`$SHELL`): `~/.zshrc` (zsh,
+trong `$ZDOTDIR` nếu có đặt), với bash trên macOS là file có trước tiên trong `~/.bash_profile`,
+`~/.bash_login`, `~/.profile` (chưa có file nào thì `~/.bash_profile`), `~/.bashrc` (bash trên Linux),
+`~/.config/fish/conf.d/sepay.fish` (fish, trong `$XDG_CONFIG_HOME` nếu có đặt), `~/.profile` (sh,
+dash, ksh). Với shell khác (tcsh,
+nushell…), hoặc khi có `--dir` mà không có `$HOME`, script chỉ nhắc bạn tự thêm thư mục vào PATH (không có cả `$HOME` lẫn `--dir` thì script không cài). Chạy lại script không ghi trùng.
+Script không đổi được PATH của terminal đang mở: mở terminal mới, hoặc chạy dòng `export PATH=…` mà
+script in ra. `SEPAY_NO_MODIFY_PATH=1` (hoặc `--no-modify-path`) để giữ nguyên các file đó; script
+chỉ in dòng `export` để bạn tự thêm. Gỡ cài đặt: xoá file `sepay` trong thư mục cài và xoá khối có
+dấu mốc (với fish là file `sepay.fish`).
+
+Script PowerShell (Windows PowerShell 5.1 trở lên) kiểm tra y như vậy và nhận cùng các biến môi
+trường, đặt trước lệnh: `$env:SEPAY_VERSION = '0.2.0'; irm … | iex`. Mặc định cài vào
+`%LOCALAPPDATA%\Programs\sepay` và thêm thư mục đó vào PATH của user (không cần quyền admin);
+`SEPAY_NO_MODIFY_PATH=1` để giữ nguyên PATH.
 
 Ghim phiên bản trong một project Node:
 
@@ -72,14 +90,21 @@ npm install -g sepay-cli@latest      # cài toàn cục bằng npm
 npm install -D sepay-cli@latest      # ghim trong project (hoặc để Dependabot / Renovate mở PR)
 brew upgrade sepay                   # Homebrew
 scoop update sepay                   # Scoop
+go install github.com/sepayvn/sepay-cli/cmd/sepay@latest
+sepay update                         # cài bằng script hoặc giải nén archive
 ```
 
-Cài bằng script hoặc `go install` thì chạy lại đúng lệnh đã cài.
+`sepay update` (hoặc `sepay upgrade`) tải bản mới nhất từ GitHub Releases cho đúng hệ điều hành
+và kiến trúc, kiểm SHA-256 với `checksums.txt` (và chữ ký nếu máy có `cosign`; `SEPAY_REQUIRE_SIGNATURE=1` từ chối cập
+nhật khi không có `cosign`), chạy thử binary mới rồi mới thay binary đang dùng. Lệnh hỏi y/N trước khi thay; `--yes` bỏ câu hỏi, và khi không có
+terminal thì bắt buộc phải có `--yes`. `--version 0.2.0` cài đúng bản đó, `--check` chỉ báo có bản
+mới hay không (kèm `--json` cho script). Nếu sepay được cài bằng npm, Homebrew, Scoop hay
+`go install`, lệnh không tự thay mà in lệnh cập nhật của công cụ đó và thoát với mã 1.
 
 Mỗi ngày một lần, khi bạn chạy lệnh trên terminal, CLI kiểm tra xem đã có bản mới chưa và bản
 đang dùng có bị ngừng hỗ trợ (bị thu hồi hoặc có lỗ hổng) không, rồi in một dòng thông báo ngắn ra
-stderr sau khi lệnh chạy xong. CLI không bao giờ tự cài gì, và không thông báo khi chạy trong CI,
-khi dùng `--json`, hoặc khi đặt `SEPAY_NO_UPDATE_NOTIFIER=1`.
+stderr sau khi lệnh chạy xong, kèm lệnh cập nhật hợp với cách bạn đã cài. Thông báo không tự cài
+gì, và không hiện khi chạy trong CI, khi dùng `--json`, hoặc khi đặt `SEPAY_NO_UPDATE_NOTIFIER=1`.
 
 ## Bắt đầu
 
@@ -95,6 +120,30 @@ Máy không có trình duyệt: `sepay login --with-token`.
 
 Mọi lệnh mặc định chạy trên **sandbox**. Thêm `--env production` để làm việc với dữ liệu thật.
 
+## Lệnh sửa dữ liệu trên production
+
+Mọi lệnh sửa dữ liệu trên production chỉ chạy khi bạn tự xác nhận trên terminal của mình. AI không
+tự xác nhận thay bạn: gặp lệnh này, AI đưa lệnh để bạn tự chạy.
+
+- Lệnh phải có `--env production` ngay trên dòng lệnh; `default_env: production` không tính.
+- Có terminal: CLI hỏi `[y/N]`, mặc định là Không.
+- Không có terminal (agent, pipe, CI): lệnh dừng với mã thoát 2 và câu `ask the user to run this command
+  in their own terminal`. Script bạn tự viết chạy được khi lệnh có `--env production`, id của tài nguyên
+  được sửa và `--yes`; lệnh tạo mới (không có id) chỉ chạy trên terminal.
+- `--dry-run` in request sẽ gửi và giá trị trước / sau, không gửi lệnh ghi nào. Lệnh vẫn gửi các
+  request đọc nó cần, nên trên production token phải có scope `read`: `webhook update`,
+  `webhook delete` và `bank-account update` đọc tài nguyên đó, `webhook create` và `update` đọc các
+  tài khoản ngân hàng nhận webhook, `paycode update` đọc danh sách pay code, `webhook replay` đọc
+  giao dịch và lần gửi gần nhất. `paycode create` và `sepay api --dry-run` không gửi gì, kể cả GET.
+
+Danh sách lệnh áp luật này: `sepay --map=json --env production`, các lệnh có `confirms: terminal`.
+Agent không tự thêm `--env production` hay `--yes` cho các lệnh này. Chi tiết:
+https://developer.sepay.vn/vi/agents/cli/quy-uoc-chung#lenh-sua-du-lieu-tren-production
+
+Trên production, CLI chỉ đọc đơn Cổng thanh toán (`pg order list`, `pg order get`) và hóa đơn điện
+tử (`einvoice invoice list`, `einvoice invoice get`); các lệnh `pg`, `einvoice`, `bankhub`, `sandbox`
+còn lại chỉ chạy trên sandbox.
+
 ## Nhận webhook đầu tiên trên localhost
 
 Không cần URL công khai, không cần tunnel.
@@ -103,7 +152,7 @@ Không cần URL công khai, không cần tunnel.
 # Handler của bạn đang chạy ở localhost:3000
 
 sepay sandbox init --with-va --with-webhook-listen        # tạo tài khoản sandbox + webhook
-sepay webhook listen --forward localhost:3000 --print     # chuyển sự kiện về handler
+sepay webhook listen --forward localhost:3000 --print     # chuyển sự kiện về handler (chỉ sandbox)
 
 # Mở terminal thứ hai: tạo một giao dịch
 sepay bank-account list                                   # ghi lại xid
@@ -111,7 +160,9 @@ sepay sandbox simulate payment_in --bank-account <ba_xid> --amount 50000 --code 
 ```
 
 Mỗi sự kiện mang đúng body và các header chữ ký mà SePay gửi, nên handler chạy đúng luồng thật,
-kể cả bước tự kiểm tra chữ ký. Kiểm tra handler phản hồi đúng: `sepay webhook test --forward localhost:3000 --amount 50000`.
+kể cả bước tự kiểm tra chữ ký. `webhook listen` chỉ chạy trên sandbox: với `--env production`
+CLI dừng với mã thoát 2, và server trả 404 cho mọi lần gọi listen trên production. Trên production,
+xem lần gửi bằng `sepay webhook logs`. Kiểm tra handler phản hồi đúng: `sepay webhook test --forward localhost:3000 --amount 50000`.
 
 ## Các lệnh
 
@@ -121,14 +172,14 @@ kể cả bước tự kiểm tra chữ ký. Kiểm tra handler phản hồi đ�
 | `auth` | `status`, `switch`, `refresh`, `sessions`, `revoke`, `token` |
 | `transaction` | Xem danh sách và chi tiết giao dịch |
 | `bank-account` | Quản lý tài khoản ngân hàng |
-| `webhook` | Tạo, sửa, xem log, `listen`, `test`, `replay` |
+| `webhook` | Tạo, sửa, xem log, `replay`; `listen`, `test` chỉ trên sandbox |
 | `va` | Quản lý tài khoản ảo (VA) |
 | `paycode` | Tiền tố mã thanh toán |
-| `pg` | Đơn hàng và merchant của Cổng thanh toán (Payment Gateway) |
+| `pg` | Đơn hàng và merchant của Cổng thanh toán (Payment Gateway); production chỉ `order list`, `order get` |
 | `bankhub` | Công ty, tài khoản và link token của Bank Hub |
-| `einvoice` | Hóa đơn điện tử |
-| `apikey` | API key |
-| `quota` | Hạn mức gói và mức sử dụng |
+| `einvoice` | Hóa đơn điện tử; production chỉ `invoice list`, `invoice get` |
+| `apikey` | API key sandbox. API key production tạo và thu hồi trên my.sepay.vn, CLI không quản lý |
+| `quota` | Hạn mức gói và mức sử dụng; production có thêm số hóa đơn điện tử còn lại |
 | `sandbox` | `init`, `seed`, `simulate`, `reset` (chỉ trên sandbox) |
 | `api` | Gọi bất kỳ endpoint nào của SePay API bằng token đã lưu |
 | `config` | Cấu hình CLI |
@@ -145,10 +196,10 @@ cho máy đọc.
 | `--env sandbox\|production` | Môi trường, mặc định `sandbox` |
 | `--json`, `-o json\|yaml` | Output cho máy đọc, không màu; mọi lệnh đọc dữ liệu đều hỗ trợ |
 | `-p, --profile` | Tài khoản cần dùng, khi đang đăng nhập nhiều tài khoản |
-| `-y, --yes` | Bỏ bước xác nhận ở lệnh ghi (script, CI); không bỏ qua được OTP |
+| `-y, --yes` | Bỏ bước xác nhận (script, CI). Với lệnh ghi production (`confirms: terminal` trong `sepay --map=json --env production`), `--yes` chỉ được nhận khi lệnh có thêm `--env production` và nêu id tài nguyên được ghi |
 | `--no-input` | Không bao giờ hỏi; thiếu giá trị thì báo lỗi |
 | `--idempotency-key` | Chạy lại một lệnh ghi bị gián đoạn mà không thực hiện hai lần |
-| `-v, --verbose` | Log gỡ lỗi; token và OTP luôn được che |
+| `-v, --verbose` | Log gỡ lỗi; token luôn được che |
 
 Biến môi trường: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOTIFIER`, `SEPAY_LANG`, `NO_COLOR`. Chi tiết: `sepay help environment`.
 
@@ -158,12 +209,11 @@ Biến môi trường: `SEPAY_PROFILE`, `SEPAY_CONFIG_DIR`, `SEPAY_NO_UPDATE_NOT
 |---|---|
 | 0 | Thành công |
 | 1 | Lỗi phía server, lỗi mạng, hoặc dữ liệu bị từ chối; đọc `error_code` trước khi chạy lại |
-| 2 | Sai flag, sai tham số, lệnh không tồn tại |
+| 2 | Sai flag, sai tham số, lệnh không tồn tại, hoặc lệnh sửa dữ liệu production cần bạn tự chạy trên terminal |
 | 3 | Lệnh có trong CLI nhưng chưa có backend; đừng chạy lại |
 | 4 | Chưa đăng nhập: `sepay login` |
-| 5 | Token thiếu quyền (scope) cần thiết: `sepay auth refresh --scopes <scope>` |
+| 5 | Token thiếu quyền (scope) cần thiết: `sepay login --scopes <scope>` |
 | 6 | Handler trên máy bạn không nhận sự kiện (`webhook test`) |
-| 7 | Server yêu cầu OTP; hãy thực hiện thao tác này trên web |
 | 8 | Tài khoản hoặc công ty của bạn không được phép làm việc này |
 | 130 | Bị ngắt: Ctrl+C hoặc Esc khi đang hỏi, hoặc tín hiệu dừng |
 

@@ -25,7 +25,7 @@ func newAuthCmd(f *cmdutil.Factory) *cobra.Command {
 		Use:   "auth",
 		Short: "Show or refresh the sandbox E-Invoice credential",
 		Long: "Mint (or reuse) the sandbox E-Invoice Bearer credential via the SePay broker.\n" +
-			"Other einvoice commands mint it automatically; run this to inspect it,\n" +
+			"einvoice commands other than invoice list and get mint it automatically; run this to inspect it,\n" +
 			"pre-warm CI, or force a refresh. The token is never printed.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

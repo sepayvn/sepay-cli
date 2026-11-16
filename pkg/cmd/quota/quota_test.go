@@ -3,6 +3,7 @@ package quota
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 const sandboxQuota = `{"status":"success","data":{"available":true,"quotas":{"transaction":{"used":12,"limit":500,"remaining":488,"period":"daily","enforcement":"blocked"},"bank_account":{"used":2,"limit":50,"remaining":48,"period":"total","enforcement":"blocked"},"webhook":{"used":1,"limit":50,"remaining":49,"period":"total","enforcement":"blocked"},"api_key":{"used":0,"limit":50,"remaining":50,"period":"total","enforcement":"blocked"}},"va_per_bank_account_limit":100}}`
@@ -155,6 +157,17 @@ func TestQuota_NoPlan(t *testing.T) {
 	assert.NotContains(t, errOut.String(), "Cong ty chua co goi")
 }
 
+// With no plan, -o json carries only available and the server's message.
+func TestQuota_NoPlanJSON(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(noPlanQuota))
+	f.Global.Output = "json"
+	require.NoError(t, run(NewCmdQuota(f)))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(out.Bytes(), &got))
+	assert.Equal(t, map[string]any{"available": false, "message": "Cong ty chua co goi dich vu nao"}, got)
+}
+
 func TestQuota_JSON(t *testing.T) {
 	f, out, _ := testFactory(t, okJSON(sandboxQuota))
 	f.Global.Output = "json"
@@ -173,4 +186,89 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+const productionEinvoiceQuota = `{"status":"success","data":{"available":true,"cycle":{"begin":"2026-11-01","end":"2026-11-30","billing_cycle":"monthly"},"quotas":{"transaction":{"used":120,"limit":1000,"remaining":880,"period":"cycle","enforcement":"capped"},"einvoice":{"used":12,"remaining":88}}}}`
+
+func TestQuota_ProductionEinvoiceRow(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(productionEinvoiceQuota))
+	require.NoError(t, run(NewCmdQuota(f)))
+
+	fields := strings.Fields(out.String())
+	assert.Equal(t, []string{"transaction", "120", "1000", "880", "cycle", "capped"}, fields[6:12])
+	assert.Equal(t, []string{"einvoice", "12", "-", "88", "-", "-"}, fields[12:18])
+}
+
+// A server that still sends "unlimited": true without remaining gets "-", the no-figure mark.
+const productionEinvoiceNoRemainingQuota = `{"status":"success","data":{"available":true,"cycle":{"begin":"2026-11-01","end":"2026-11-30","billing_cycle":"monthly"},"quotas":{"transaction":{"used":120,"limit":1000,"remaining":880,"period":"cycle","enforcement":"capped"},"einvoice":{"used":12,"unlimited":true}}}}`
+
+func TestQuota_EinvoiceWithoutRemainingIsDash(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(productionEinvoiceNoRemainingQuota))
+	require.NoError(t, run(NewCmdQuota(f)))
+
+	fields := strings.Fields(out.String())
+	assert.Equal(t, []string{"einvoice", "12", "-", "-", "-", "-"}, fields[12:18])
+}
+
+func TestQuota_ProductionEinvoiceJSON(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(productionEinvoiceQuota))
+	f.Global.Output = "json"
+	require.NoError(t, run(NewCmdQuota(f)))
+
+	var got struct {
+		Quotas map[string]map[string]any `json:"quotas"`
+	}
+	require.NoError(t, json.Unmarshal(out.Bytes(), &got))
+	assert.Equal(t, map[string]any{"used": float64(12), "remaining": float64(88)}, got.Quotas["einvoice"])
+	assert.Equal(t, "cycle", got.Quotas["transaction"]["period"])
+}
+
+func TestQuota_ProductionEinvoiceYAML(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(productionEinvoiceQuota))
+	f.Global.Output = "yaml"
+	require.NoError(t, run(NewCmdQuota(f)))
+
+	var got struct {
+		Quotas map[string]map[string]any `yaml:"quotas"`
+	}
+	require.NoError(t, yaml.Unmarshal(out.Bytes(), &got))
+	assert.Equal(t, map[string]any{"used": 12, "remaining": 88}, got.Quotas["einvoice"])
+	assert.Equal(t, "cycle", got.Quotas["transaction"]["period"])
+}
+
+// An active plan without an e-invoice plan carries no einvoice key.
+func TestQuota_NoEinvoicePlanHasNoEinvoiceRow(t *testing.T) {
+	f, out, _ := testFactory(t, okJSON(productionQuota))
+	require.NoError(t, run(NewCmdQuota(f)))
+	assert.NotContains(t, out.String(), "einvoice")
+	assert.Contains(t, out.String(), "transaction")
+
+	for output, unmarshal := range map[string]func([]byte, any) error{"json": json.Unmarshal, "yaml": yaml.Unmarshal} {
+		t.Run(output, func(t *testing.T) {
+			f, out, _ := testFactory(t, okJSON(productionQuota))
+			f.Global.Output = output
+			require.NoError(t, run(NewCmdQuota(f)))
+
+			var got struct {
+				Quotas map[string]any `json:"quotas" yaml:"quotas"`
+			}
+			require.NoError(t, unmarshal(out.Bytes(), &got))
+			assert.NotContains(t, got.Quotas, "einvoice")
+			assert.Contains(t, got.Quotas, "transaction")
+		})
+	}
+}
+
+func TestQuota_HelpDescribesTheEinvoiceRow(t *testing.T) {
+	f, _, _ := testFactory(t, okJSON(productionQuota))
+	long := NewCmdQuota(f).Long
+
+	assert.Contains(t, long, "e-invoice quota")
+	assert.Contains(t, long, `the einvoice row shows the e-invoices issued to date (USED)`)
+	assert.Contains(t, long, `the number your plan still lets you issue (REMAINING);`)
+	assert.Contains(t, long, "There is no einvoice row if your company has not bought an\ne-invoice plan.")
+	// "unlimited" stays an ENFORCEMENT value of the transaction row, never an einvoice state.
+	_, einvoice, ok := strings.Cut(long, "the einvoice row")
+	require.True(t, ok)
+	assert.NotContains(t, einvoice, "unlimited")
 }

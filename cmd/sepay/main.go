@@ -30,9 +30,20 @@ func run() cmdutil.ExitCode {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	exe, err := os.Executable()
+	if err == nil {
+		// Homebrew and npm start sepay through a symlink; the channel shows in the target.
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		// The binary a Windows "sepay update" moved aside could not be deleted while it ran.
+		update.RemoveOld(exe)
+	}
+
 	newer := checkForUpdate(ctx)
 
-	if cmd, err := rootCmd.ExecuteContextC(ctx); err != nil {
+	cmd, err := rootCmd.ExecuteContextC(ctx)
+	if err != nil {
 		// A cancelled context surfaces as context.Canceled or a transport error naming the signal.
 		if ctx.Err() != nil {
 			err = cmdutil.ErrInterrupted
@@ -40,14 +51,10 @@ func run() cmdutil.ExitCode {
 		f.UsageCommand = cmd.CommandPath()
 		return cmdutil.HandleError(f, err)
 	}
-	if f.Global.Output == "table" && !f.Global.Quiet {
+	// "sepay update" has just answered the question the notice asks.
+	if f.Global.Output == "table" && !f.Global.Quiet && cmd.CommandPath() != "sepay update" {
 		select {
 		case res := <-newer:
-			exe, _ := os.Executable()
-			// Homebrew and npm start sepay through a symlink; the channel shows in the target.
-			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-				exe = resolved
-			}
 			fmt.Fprint(f.IOStreams.ErrOut, update.Notice(build.Version, res, exe))
 		case <-time.After(time.Second):
 		}

@@ -1,0 +1,42 @@
+[
+  {
+    "reference_code": "DH1007",
+    "invoice_number": "0000123",
+    "invoice_series": "1C26TSP",
+    "document_type": 2,
+    "issued_date": "2026-11-10",
+    "pdf_url": "https://files.example/DH1007.pdf",
+    "xml_url": null,
+    "status": "issued",
+    "payment_method": "TM/CK",
+    "buyer": {
+      "type": "company",
+      "name": "Công ty A",
+      "legal_name": "Công ty TNHH A",
+      "tax_code": "0101234567",
+      "address": "1 Đường A",
+      "email": "a@example.com",
+      "phone": "0900000000"
+    },
+    "total_before_tax": 100000,
+    "tax_amount": 10000,
+    "total_amount": 110000,
+    "source": "api"
+  },
+  {
+    "reference_code": "DH1006",
+    "invoice_number": "",
+    "document_type": 1,
+    "issued_date": "",
+    "pdf_url": null,
+    "xml_url": null,
+    "status": "draft",
+    "buyer": {
+      "name": "Khách lẻ"
+    },
+    "total_before_tax": 0,
+    "tax_amount": 0,
+    "total_amount": 0,
+    "source": "manual"
+  }
+]

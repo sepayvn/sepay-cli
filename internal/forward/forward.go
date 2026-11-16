@@ -52,7 +52,8 @@ func NewForwarder(addr string, skipTLSVerify bool) (*Forwarder, error) {
 	transport := http.DefaultTransport
 	insecure := skipTLSVerify && u.Scheme == "https"
 	if insecure {
-		transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // opt-in, loopback only (checked above)
+		// #nosec G402 -- opt-in, loopback only (checked above)
+		transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	}
 	return &Forwarder{
 		target:    u.String(),

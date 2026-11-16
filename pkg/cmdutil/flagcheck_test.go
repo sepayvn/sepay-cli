@@ -59,6 +59,16 @@ func TestValidateDays(t *testing.T) {
 	}
 }
 
+func TestValidateDateOnly(t *testing.T) {
+	require.NoError(t, ValidateDateOnly(dateCmd(t, "2026-07-27"), "from"))
+	for _, bad := range []string{"2026-07-27 143000", "2026-07-27 14:30:00", "2026-13-01", "2026-02-30", "27/07/2026", "nope"} {
+		err := ValidateDateOnly(dateCmd(t, bad), "from")
+		require.Error(t, err, bad)
+		assert.Equal(t, "--from must be a date (YYYY-MM-DD)", err.Error(), bad)
+	}
+	require.NoError(t, ValidateDateOnly(dateCmd(t, ""), "from"), "empty is unset")
+}
+
 func TestValidateDates_EmptyIsUnset(t *testing.T) {
 	require.NoError(t, ValidateDates(dateCmd(t, ""), "from"))
 	require.NoError(t, ValidateDays(dateCmd(t, ""), "from"))

@@ -30,6 +30,20 @@ func TestStream_EventTooLarge(t *testing.T) {
 	assert.ErrorIs(t, err, sse.ErrEventTooLarge)
 }
 
+func TestOpen_SendsUserAgent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		streamHandler("", false)(w, r)
+	}))
+	defer srv.Close()
+
+	stream, err := sse.NewClient().Open(context.Background(), srv.URL, "lk_test", time.Second)
+	require.NoError(t, err)
+	_ = stream.Close()
+	assert.Equal(t, api.UserAgent(), got)
+}
+
 // streamHandler writes raw SSE text, then optionally holds the connection until the client leaves.
 func streamHandler(raw string, hold bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

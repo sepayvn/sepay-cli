@@ -63,6 +63,18 @@ func TestCreate_ListenOnlyRefusesProductionEnv(t *testing.T) {
 	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
 }
 
+func TestUpdate_ListenOnlyRefusesProductionEnv(t *testing.T) {
+	f, _, _ := testFactory(t, func(_ http.ResponseWriter, _ *http.Request) {
+		t.Error("the API must not be called when the env is refused")
+	})
+	f.Global.Env = config.EnvProduction
+
+	err := run(NewCmdWebhook(f), "update", "wh_1", "--listen-only")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sandbox-only")
+	assert.Equal(t, cmdutil.ExitUsage, cmdutil.ExitCodeForError(err))
+}
+
 func TestUpdate_URLSendsHTTPModeInSandbox(t *testing.T) {
 	var body []byte
 	f, _, _ := testFactory(t, func(w http.ResponseWriter, r *http.Request) {

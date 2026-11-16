@@ -103,7 +103,7 @@ func newCompanyCreateCmd(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runCompanyCreate(ctx context.Context, f *cmdutil.Factory, name, status string) error {
-	if err := f.ConfirmMutation("create company "+name, false); err != nil {
+	if err := f.ConfirmMutation("create company "+name, "", false); err != nil {
 		return err
 	}
 	client, err := f.NewBankHubClient()
@@ -245,7 +245,7 @@ func runCompanyUpdate(ctx context.Context, f *cmdutil.Factory, xid string, body 
 	if err != nil {
 		return err
 	}
-	if err := f.ConfirmMutation("update company "+xid, true); err != nil {
+	if err := f.ConfirmMutation("update company "+xid, xid, true); err != nil {
 		return err
 	}
 	client, err := f.NewBankHubClient()

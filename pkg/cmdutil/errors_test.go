@@ -27,7 +27,7 @@ func TestExitCodeForError(t *testing.T) {
 		{"nil", nil, ExitOK},
 		{"silent sentinel", ErrSilent, ExitError},
 		{"silent coded", SilentError{Code: ExitAuth}, ExitAuth},
-		{"wrapped coded", fmt.Errorf("context: %w", SilentError{Code: ExitOTP}), ExitOTP},
+		{"wrapped coded", fmt.Errorf("context: %w", SilentError{Code: ExitBlocked}), ExitBlocked},
 		{"flag error", &FlagError{Err: errors.New("bad flag")}, ExitUsage},
 		{"api 401", &api.HTTPError{StatusCode: 401}, ExitAuth},
 		{"api 403 missing scope", &api.HTTPError{StatusCode: 403, Code: "insufficient_scope"}, ExitScope},
@@ -37,7 +37,6 @@ func TestExitCodeForError(t *testing.T) {
 		{"api 403 sandbox unprovisioned", &api.HTTPError{StatusCode: 403, Code: "sandbox_not_provisioned"}, ExitBlocked},
 		{"api 401 test mode off", &api.HTTPError{StatusCode: 401, Code: "test_mode_disabled"}, ExitBlocked},
 		{"api 403 unknown code", &api.HTTPError{StatusCode: 403, Code: "some_new_code"}, ExitBlocked},
-		{"api otp challenge", &api.HTTPError{StatusCode: 428, Code: "otp_required"}, ExitOTP},
 		{"api 422", &api.HTTPError{StatusCode: 422}, ExitError},
 		{"api 500", &api.HTTPError{StatusCode: 500}, ExitError},
 		{"cobra usage", errors.New(`unknown command "x" for "sepay"`), ExitUsage},
@@ -67,6 +66,14 @@ func TestHandleError_PrintsMessageAndUsageHint(t *testing.T) {
 	code := HandleError(f, &FlagError{Err: errors.New("bad flag")})
 	assert.Equal(t, ExitUsage, code)
 	assert.Equal(t, "Error: bad flag\nRun 'sepay --help' for usage.\n", errOut.String())
+}
+
+func TestHandleError_PrintsTheHeldEnvBannerFirst(t *testing.T) {
+	f, errOut := testFactory("table")
+	f.holdBanner = true
+	f.heldBanner = func() { errOut.WriteString("env: production\n") }
+	HandleError(f, errors.New("not found"))
+	assert.Equal(t, "env: production\nError: not found\n", errOut.String(), "a write that failed before its confirm still names its env")
 }
 
 func TestHandleError_UsageHintNamesTheFailingCommand(t *testing.T) {
@@ -133,7 +140,7 @@ func TestHandleError_JSONEnvelopePerFailureClass(t *testing.T) {
 		{"usage error", &FlagError{Err: errors.New("accepts 1 arg(s), received 0")}, "usage_error", ExitUsage, "accepts 1 arg"},
 		{"cobra arg count", errors.New("accepts at most 1 arg(s), received 2"), "usage_error", ExitUsage, "received 2"},
 		{"unknown command", errors.New(`unknown command "bogus" for "sepay"`), "usage_error", ExitUsage, "unknown command"},
-		{"not implemented", NotImplementedError{Path: "sepay report cashflow"}, "not_implemented", ExitNotImplemented, "not implemented"},
+		{"not implemented", NotImplementedError{Path: "sepay einvoice invoice delete"}, "not_implemented", ExitNotImplemented, "not implemented"},
 		{"unauthenticated", AuthError{Err: errors.New("not logged in, run: sepay login")}, "unauthenticated", ExitAuth, "sepay login"},
 		{"scope", ScopeError{Err: errors.New("the server rejected the scope set")}, "insufficient_scope", ExitScope, "scope"},
 		{"server code wins", &api.HTTPError{StatusCode: 403, Code: "forbidden"}, "forbidden", ExitBlocked, "lacks permission"},
@@ -430,7 +437,7 @@ func TestErrorsTopic_MatchesTheCodesTheCLIHandles(t *testing.T) {
 	}
 
 	ownExit := []string{
-		"insufficient_scope", "access_revoked", "otp_required", "feature_disabled", "forbidden",
+		"insufficient_scope", "access_revoked", "feature_disabled", "forbidden",
 		"test_mode_disabled", "sandbox_not_provisioned", "sse_hub_disabled", "quota_exceeded",
 	}
 	for _, code := range ownExit {
@@ -438,4 +445,54 @@ func TestErrorsTopic_MatchesTheCodesTheCLIHandles(t *testing.T) {
 		row := fmt.Sprintf("| %#q | %d |", code, want)
 		assert.Contains(t, topic, row, "the errors topic gives %s another exit code", code)
 	}
+}
+
+// A ScopeError that replaces a server error prints its own text, and machine output keeps the
+// server's code and request id; the plain insufficient_scope and a cause-less ScopeError are unchanged.
+func TestScopeError_ReplacingAServerError(t *testing.T) {
+	server := &api.HTTPError{StatusCode: 403, Code: "insufficient_scope", Message: "Missing required scope: x", RequestID: "req_1"}
+	replaced := ScopeError{Err: errors.New("this command needs the x scope, run: sepay login"), Cause: server}
+
+	assert.Equal(t, "this command needs the x scope, run: sepay login", errorMessage(replaced))
+	assert.Equal(t, ExitScope, ExitCodeForError(replaced))
+	assert.Equal(t, apiErrorMessage["insufficient_scope"], errorMessage(server))
+	assert.Equal(t, "the server rejected the scope set", errorMessage(ScopeError{Err: errors.New("the server rejected the scope set")}))
+	assert.Equal(t, "refresh: the server rejected the scope set",
+		errorMessage(fmt.Errorf("refresh: %w", ScopeError{Err: errors.New("the server rejected the scope set")})),
+		"a wrapped cause-less ScopeError keeps its context")
+
+	f, errOut := testFactory("json")
+	assert.Equal(t, ExitScope, HandleError(f, replaced))
+	var got struct {
+		ErrorCode string `json:"error_code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	require.NoError(t, json.Unmarshal(errOut.Bytes(), &got), errOut.String())
+	assert.Equal(t, "insufficient_scope", got.ErrorCode)
+	assert.Equal(t, "req_1", got.RequestID)
+	assert.Equal(t, "this command needs the x scope, run: sepay login", got.Message)
+}
+
+// A product read's insufficient_scope becomes its own exit-5 text that names the scope and the
+// permission; any other error passes through unchanged.
+func TestReadScopeError(t *testing.T) {
+	server := &api.HTTPError{StatusCode: 403, Code: "insufficient_scope", Message: "Missing required scope: pg:read", RequestID: "req_1"}
+
+	err := ReadScopeError(server, "pg:read", "Cổng thanh toán › Xem danh sách đơn hàng")
+
+	assert.Equal(t, ExitScope, ExitCodeForError(err))
+	assert.Equal(t, "this command needs the read and pg:read scopes, granted at sepay login to users with the permission «Cổng thanh toán › Xem danh sách đơn hàng»; ask an admin of your company if you lack it", errorMessage(err))
+	var cause *api.HTTPError
+	require.ErrorAs(t, err, &cause)
+	assert.Equal(t, "req_1", cause.RequestID)
+
+	forbidden := &api.HTTPError{StatusCode: 403, Code: "forbidden"}
+	assert.Same(t, forbidden, ReadScopeError(forbidden, "pg:read", "Cổng thanh toán › Xem danh sách đơn hàng"))
+	plain := errors.New("connection refused")
+	assert.Equal(t, plain, ReadScopeError(plain, "pg:read", "Cổng thanh toán › Xem danh sách đơn hàng"))
+
+	wrapped := ReadScopeError(fmt.Errorf("page 2: %w", server), "pg:read", "Cổng thanh toán › Xem danh sách đơn hàng")
+	assert.Equal(t, ExitScope, ExitCodeForError(wrapped))
+	assert.Contains(t, errorMessage(wrapped), "the read and pg:read scopes", "a wrapped insufficient_scope is found too")
 }

@@ -50,7 +50,7 @@ without a local copy (a leaked or CI token), use "sepay auth revoke".`,
 	cmd.Flags().BoolVar(&opts.local, "local", false, "Remove the stored credential without revoking it server-side")
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnConfirms: "conditional",
-		cmdutil.AnnGuidance: "--all logs out of every stored profile and revokes each account's sessions; that one prompts. --local skips the server revoke and leaves the session live.",
+		cmdutil.AnnGuidance: "--all prompts first: it logs out of every stored profile and revokes each account's sessions, in sandbox and production alike. --local skips the server revoke and leaves the session live; --all --local removes every profile from this machine and revokes nothing.",
 	})
 }
 
@@ -66,7 +66,11 @@ func runLogout(ctx context.Context, f *cmdutil.Factory, opts *logoutOptions) err
 		return err
 	}
 	if opts.all {
-		if ok, cerr := f.Confirm("log out of EVERY stored profile (and revoke each account's sessions)?"); cerr != nil {
+		label := "log out of EVERY stored profile (and revoke each account's sessions)?"
+		if opts.local {
+			label = "remove EVERY stored profile from this machine (their sessions stay live)?"
+		}
+		if ok, cerr := f.Confirm(label); cerr != nil {
 			return cerr
 		} else if !ok {
 			return &cmdutil.FlagError{Err: errors.New("logout --all cancelled")}

@@ -13,9 +13,10 @@ import (
 )
 
 // apiErrorMessage maps known API error_codes to English messages.
-var apiErrorMessage = map[string]string{ //nolint:gosec // G101: error messages, no credential
+// #nosec G101 -- error messages, no credential
+var apiErrorMessage = map[string]string{
 	"unauthorized":             "session expired, run: sepay login",
-	"insufficient_scope":       "token lacks the required scope, run: sepay auth refresh --scopes <scope>",
+	"insufficient_scope":       "token lacks the required scope, run: sepay login --scopes <scope>",
 	"rate_limited":             "too many requests, retry shortly",
 	"validation_error":         "the request failed validation",
 	"feature_disabled":         "the CLI is not enabled for your company on production; ask SePay to turn it on",
@@ -25,7 +26,6 @@ var apiErrorMessage = map[string]string{ //nolint:gosec // G101: error messages,
 	"multiple_companies":       "your account belongs to more than one company, which the CLI cannot act for",
 	"sms_not_allowed":          "your plan does not include SMS connections; use --connection api",
 	"connection_not_supported": "this bank has no API connection; pick another bank, or use --connection sms if your plan includes SMS",
-	"otp_required":             "this action needs an OTP, which the CLI cannot supply yet; do it in the web app",
 	"unsupported_api_version":  "this sepay CLI version is not supported by the server; upgrade to the latest release",
 	"access_revoked":           "your access to this stream was revoked, run: sepay login",
 	"sse_hub_disabled":         "the listen feature is switched off on SePay's side; it works again once SePay turns it back on",
@@ -61,6 +61,11 @@ var apiErrorMessage = map[string]string{ //nolint:gosec // G101: error messages,
 var reasonCodes = map[string]bool{"replay_not_dispatched": true, "replay_already_delivered": true, "replay_rate_limited": true}
 
 func errorMessage(err error) string {
+	// A ScopeError that replaces a server error says why in its own words.
+	var scopeErr ScopeError
+	if errors.As(err, &scopeErr) && scopeErr.Cause != nil {
+		return scopeErr.Err.Error()
+	}
 	var apiErr *api.HTTPError
 	if !errors.As(err, &apiErr) {
 		return err.Error()
@@ -161,16 +166,41 @@ func UnknownProfileError(name string) error {
 	return &FlagError{Err: fmt.Errorf("unknown profile %q (see: sepay auth status)", name)}
 }
 
-// ScopeError marks a failure caused by the token's scopes.
+// ScopeError marks a failure caused by the token's scopes. Err is what the user reads; Cause, when
+// set, is the server error it replaces, kept for its request id and error code.
 type ScopeError struct {
-	Err error
+	Err   error
+	Cause error
 }
 
 func (e ScopeError) Error() string { return e.Err.Error() }
-func (e ScopeError) Unwrap() error { return e.Err }
+
+// Unwrap exposes Cause too, so errors.As still finds the server error.
+func (e ScopeError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{e.Err}
+	}
+	return []error{e.Err, e.Cause}
+}
 
 // ExitCode returns ExitScope.
 func (e ScopeError) ExitCode() ExitCode { return ExitScope }
+
+// ReadScopeError gives a production insufficient_scope from a product read (pg, einvoice) its own
+// exit-5 text. The server answers insufficient_scope for a missing "read" too; the consent screen
+// offers the product scope only to a user holding the permission, and refresh cannot add a scope
+// missing at login. The server error stays as Cause for its request id.
+func ReadScopeError(err error, scope, permission string) error {
+	var apiErr *api.HTTPError
+	if !errors.As(err, &apiErr) || apiErr.Code != "insufficient_scope" {
+		return err
+	}
+	return ScopeError{
+		Err: fmt.Errorf("this command needs the read and %s scopes, granted at sepay login to users with the permission «%s»; ask an admin of your company if you lack it",
+			scope, permission),
+		Cause: err,
+	}
+}
 
 // AuthError marks a failure caused by having no usable credential.
 type AuthError struct {
@@ -216,8 +246,6 @@ func ExitCodeForError(err error) ExitCode {
 			return ExitScope
 		case "access_revoked":
 			return ExitAuth
-		case "otp_required":
-			return ExitOTP
 		case "feature_disabled", "forbidden", "test_mode_disabled", "sandbox_not_provisioned",
 			"sse_hub_disabled":
 			return ExitBlocked
@@ -285,6 +313,8 @@ func HandleError(f *Factory, err error) ExitCode {
 	if code == ExitInterrupted {
 		return code
 	}
+	// A write that failed before its confirm still names the env it was about to reach.
+	f.releaseEnvBanner()
 	// Errors embed user paths and server strings: sanitise line by line to keep multi-line validation output.
 	fmt.Fprintln(ios.ErrOut, "Error:", cleanKeepingNewlines(formatError(err)))
 	if code == ExitUsage {

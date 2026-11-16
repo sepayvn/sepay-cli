@@ -73,7 +73,6 @@ jobs:
       - name: go mod tidy leaves no diff
         run: |
           go mod tidy && git diff --exit-code go.mod go.sum
-          go -C tools mod tidy && git diff --exit-code tools/go.mod tools/go.sum
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
@@ -85,6 +84,40 @@ jobs:
         run: shellcheck -s sh scripts/install.sh
       - name: shellcheck npm-bootstrap.sh
         run: shellcheck scripts/npm-bootstrap.sh # bash, from its shebang
+      - name: install.sh puts its directory on PATH
+        run: |
+          shellcheck scripts/test-install-path.sh
+          bash scripts/test-install-path.sh
+
+  # install.ps1 must run on the Windows PowerShell 5.1 every Windows 10/11 ships, not only pwsh 7.
+  install-ps1:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Repository PSGallery -Scope CurrentUser -Force
+          $findings = Invoke-ScriptAnalyzer -Path scripts/install.ps1 -Severity Warning, Error -Settings @{
+            Rules = @{ PSUseCompatibleSyntax = @{ Enable = $true; TargetVersions = @('5.1', '7.0') } }
+          }
+          $findings | Format-Table -AutoSize RuleName, Line, Message
+          if ($findings) { exit 1 }
+      # Reaches the version check after TLS, System.Net.Http and the HttpClient are set up, and must
+      # fail there with exit 1; downloads are not exercised, so no release has to exist.
+      - name: runs on Windows PowerShell 5.1
+        shell: powershell
+        env:
+          SEPAY_VERSION: not-a-version
+        # Actions runs this shell with 'stop', which turns the child's redirected stderr into an error.
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 1 -or $out -notmatch 'SEPAY_VERSION must look like') { exit 1 }
+          exit 0
 
   test:
     strategy:
@@ -118,7 +151,7 @@ jobs:
         with:
           go-version-file: go.mod # see the comment at the first declaration
       - name: govulncheck
-        run: go tool -modfile=tools/go.mod govulncheck ./...
+        run: go tool govulncheck ./...
 
   # A public repository publishes every commit of its history, so this scans all of
   # it; a fake credential in a test carries
@@ -134,7 +167,7 @@ jobs:
         with:
           go-version-file: go.mod # see the comment at the first declaration
       - name: gitleaks
-        run: go tool -modfile=tools/go.mod gitleaks git . --redact
+        run: go tool gitleaks git . --redact
 
   build:
     runs-on: ubuntu-latest

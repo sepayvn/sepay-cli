@@ -280,12 +280,6 @@ type issueBody struct {
 	TerminalName string `json:"terminal_name,omitempty"`
 }
 
-// issueResult is the issue response.
-type issueResult struct {
-	OtpRequired bool `json:"otp_required" yaml:"otp_required"`
-	VA          `yaml:",inline"`
-}
-
 func newIssueCmd(f *cmdutil.Factory) *cobra.Command {
 	var bankAccount, label, tid, terminalName string
 	cmd := &cobra.Command{
@@ -299,7 +293,7 @@ flag. --tid and --terminal-name apply to Vietcombank OneQR accounts only.
 		Example: `  sepay va issue --bank-account <bank-account-xid> --label "Order 1001"`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			// Production has no VA-issue endpoint, and --yes skips the confirm.
+			// Production has no VA-issue endpoint.
 			if err := f.AssertSandboxOnly("va issue"); err != nil {
 				return err
 			}
@@ -326,7 +320,7 @@ func runIssue(ctx context.Context, f *cmdutil.Factory, baXID string, body issueB
 	if err != nil {
 		return err
 	}
-	if err := f.ConfirmMutation("issue virtual account", false); err != nil {
+	if err := f.ConfirmMutation("issue virtual account", "", false); err != nil {
 		return err
 	}
 
@@ -342,13 +336,13 @@ func runIssue(ctx context.Context, f *cmdutil.Factory, baXID string, body issueB
 	if err != nil {
 		return err
 	}
-	res, err := api.DataInto[issueResult](env)
+	va, err := api.DataInto[VA](env)
 	if err != nil {
 		return err
 	}
-	return f.RenderOutput(res, func() error {
-		f.ErrPrintf("Issued virtual account %s.\n", res.VA.VA)
-		return renderVADetail(f, res.VA)
+	return f.RenderOutput(va, func() error {
+		f.ErrPrintf("Issued virtual account %s.\n", va.VA)
+		return renderVADetail(f, va)
 	})
 }
 
@@ -394,7 +388,7 @@ func runRevoke(ctx context.Context, f *cmdutil.Factory, baXID, va string) error 
 	if err != nil {
 		return err
 	}
-	if err := f.ConfirmMutation(fmt.Sprintf("revoke virtual account %s", va), true); err != nil {
+	if err := f.ConfirmMutation(fmt.Sprintf("revoke virtual account %s", va), va, true); err != nil {
 		return err
 	}
 

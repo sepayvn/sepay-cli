@@ -230,7 +230,7 @@ key SePay sends with each delivery (--api-key).
 				return err
 			}
 
-			if err := f.ConfirmMutation("set the Bank Hub IPN URL", true); err != nil {
+			if err := f.ConfirmMutation("set the Bank Hub IPN URL", "", true); err != nil {
 				return err
 			}
 

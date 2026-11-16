@@ -10,11 +10,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sepayvn/sepay-cli/internal/agent"
 	"github.com/sepayvn/sepay-cli/internal/build"
 )
 
@@ -27,8 +30,19 @@ const MaxResponseBytes = 10 << 20
 // maxBackoff caps one 429 wait against a hostile Retry-After.
 const maxBackoff = 60 * time.Second
 
-// UserAgent identifies the CLI build.
-func UserAgent() string { return "sepay-cli/" + build.Version }
+// UserAgent identifies the CLI build and platform, plus the AI agent that launched it, if any.
+// The agent token is self-declared: the server may log it but must never use it for authorization.
+func UserAgent() string {
+	return formatUserAgent(build.Version, runtime.GOOS, runtime.GOARCH, agent.Detect(os.Getenv))
+}
+
+func formatUserAgent(version, goos, goarch, agentName string) string {
+	ua := "sepay-cli/" + version + " (" + goos + "; " + goarch + ")"
+	if agentName != "" {
+		ua += " AI-Agent/" + agentName
+	}
+	return ua
+}
 
 // ErrResponseTooLarge is a body over MaxResponseBytes: the server answered, so a resend would only fetch it again.
 var ErrResponseTooLarge = fmt.Errorf("server response exceeded %d bytes", MaxResponseBytes)
@@ -130,7 +144,14 @@ type Client struct {
 
 	// Logf, if set, reports progress such as a 429 retry.
 	Logf func(format string, args ...any)
+
+	// ReadOnly refuses every method but GET and HEAD before a connection opens: a dry run that
+	// reaches a write by mistake fails instead of sending it.
+	ReadOnly bool
 }
+
+// ErrReadOnly refuses a write on a ReadOnly client.
+var ErrReadOnly = errors.New("refusing to send a write during a dry run")
 
 // NoRedirect refuses redirects so the Bearer token is never resent to another host.
 func NoRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -192,6 +213,9 @@ func (c *Client) Request(ctx context.Context, method, path string, query url.Val
 }
 
 func (c *Client) do(ctx context.Context, method, fullURL string, opts WriteOptions) (*Envelope, error) {
+	if c.ReadOnly && method != http.MethodGet && method != http.MethodHead {
+		return nil, ErrReadOnly
+	}
 	if HasDotSegment(strings.TrimPrefix(fullURL, c.baseURL)) {
 		return nil, ErrDotSegment
 	}

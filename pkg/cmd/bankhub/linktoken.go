@@ -144,7 +144,7 @@ returned. "link-token revoke" takes the xid instead.`,
 }
 
 func runLinkTokenCreate(ctx context.Context, f *cmdutil.Factory, body map[string]any, showToken bool) error {
-	if err := f.ConfirmMutation("create link token", false); err != nil {
+	if err := f.ConfirmMutation("create link token", "", false); err != nil {
 		return err
 	}
 	client, err := f.NewBankHubClient()
@@ -200,7 +200,7 @@ func newLinkTokenRevokeCmd(f *cmdutil.Factory) *cobra.Command {
 }
 
 func runLinkTokenRevoke(ctx context.Context, f *cmdutil.Factory, xid string) error {
-	if err := f.ConfirmMutation("revoke link token "+xid, true); err != nil {
+	if err := f.ConfirmMutation("revoke link token "+xid, xid, true); err != nil {
 		return err
 	}
 	client, err := f.NewBankHubClient()

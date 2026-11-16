@@ -16,7 +16,7 @@ Gửi kèm các bước tái hiện và phiên bản bị ảnh hưởng (`sepay
 | Trong phạm vi | Ngoài phạm vi |
 |---|---|
 | Binary `sepay` (mọi kênh cài đặt) | `api.sepay.vn` và các API của SePay |
-| Script cài đặt `scripts/install.sh` | `my.sepay.vn` và các ứng dụng web khác của SePay |
+| Script cài đặt `scripts/install.sh`, `scripts/install.ps1` | `my.sepay.vn` và các ứng dụng web khác của SePay |
 | Các gói npm (`sepay-cli`, `@sepayjsc/cli-*`) | |
 | Bộ kiểm tra phiên bản mới (update notifier) | |
 
@@ -101,7 +101,7 @@ Include steps to reproduce and the affected version (`sepay version`).
 | In scope | Out of scope |
 |---|---|
 | The `sepay` binary (every install channel) | `api.sepay.vn` and the other SePay APIs |
-| The install script `scripts/install.sh` | `my.sepay.vn` and the other SePay web apps |
+| The install scripts `scripts/install.sh`, `scripts/install.ps1` | `my.sepay.vn` and the other SePay web apps |
 | The npm packages (`sepay-cli`, `@sepayjsc/cli-*`) | |
 | The update notifier | |
 
@@ -146,6 +146,9 @@ internal endpoint or host credential.
   The token is **never printed** (`login`, `auth status`, `--verbose` and error messages all redact
   it). Only `sepay auth token` prints it, and only when called explicitly.
 - A session comes only from `sepay login`; no environment variable injects a token.
+- Requests to SePay hosts carry a `User-Agent` with the CLI version, OS, CPU architecture and, when
+  an AI agent launched the CLI, the agent's name (`sepay help environment`). The server only logs
+  it; it is never used to authorize a request.
 - The CLI calls only the **public** SePay API, never a CLI-private or internal endpoint. The one
   other host is `registry.npmjs.org`, asked at most once a day for the latest version; it receives no
   credential (`SEPAY_NO_UPDATE_NOTIFIER=1` turns this off).

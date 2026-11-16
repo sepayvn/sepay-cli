@@ -71,6 +71,7 @@ func (c *Client) doBearer(ctx context.Context, method, path, accessToken string,
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", api.UserAgent())
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}

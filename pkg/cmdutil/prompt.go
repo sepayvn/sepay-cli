@@ -254,17 +254,29 @@ func (f *Factory) Confirm(label string) (bool, error) {
 	if f.Global.Yes {
 		return true, nil
 	}
-	if !f.canPrompt() {
-		return false, &FlagError{Err: fmt.Errorf("%s requires confirmation; pass --yes", label)}
+	if err := f.unattendedConfirm(label); err != nil {
+		return false, err
 	}
 	return f.AskYesNo(label, false)
 }
 
+// unattendedConfirm is Confirm's refusal when nothing can answer it, nil when --yes or a prompt can.
+func (f *Factory) unattendedConfirm(label string) error {
+	if f.Global.Yes || f.canPrompt() {
+		return nil
+	}
+	return &FlagError{Err: fmt.Errorf("%s requires confirmation; pass --yes", label)}
+}
+
 // ConfirmByTyping makes the user type want back before action. --yes does not answer it and a
-// run without a terminal is a usage error, so the action stays one a person takes by hand.
+// run without a terminal is a usage error, so the action stays one a person takes by hand. A dry
+// run asks nothing: it records that refusal for would_refuse and passes.
 func (f *Factory) ConfirmByTyping(action, want string) error {
 	if !f.canPrompt() {
-		return &FlagError{Err: fmt.Errorf("%s must be confirmed on a terminal; --yes does not confirm it", action)}
+		return f.RefuseUnlessDryRun(&FlagError{Err: fmt.Errorf("%s must be confirmed on a terminal; --yes does not confirm it", action)})
+	}
+	if f.Global.DryRun {
+		return nil
 	}
 	got, err := f.Input(fmt.Sprintf("Type %s to confirm", want))
 	if err != nil {

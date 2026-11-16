@@ -12,8 +12,10 @@ const (
 	AnnEnvs        = "sepay:envs"        // "sandbox" when production is refused, else unset (both)
 	// AnnDestructive marks a command whose effect no other command can undo.
 	AnnDestructive = "sepay:destructive" // "irreversible", or unset
-	// AnnConfirms marks a command that prompts even in sandbox, so it needs --yes unattended.
-	AnnConfirms = "sepay:confirms" // "always" | "conditional", or unset
+	// AnnConfirms states when a command prompts: one value for every env it runs in, or
+	// comma-separated env=value pairs, e.g. "sandbox=always,production=terminal". Values are
+	// "always" | "conditional" | ConfirmsTerminal; an env left out has none. Read it with ConfirmsIn.
+	AnnConfirms = "sepay:confirms"
 	AnnScope    = "sepay:scope"    // capability scope required on the production host
 	AnnGuidance = "sepay:guidance" // extra [Agent guidance] line for this command
 	// AnnRequired lists flags a non-interactive run needs; written only by MarkRequired.
@@ -23,6 +25,28 @@ const (
 	// AnnHost names the hosts a command under a product noun calls when they are not its noun's.
 	AnnHost = "sepay:host" // HostAPI | HostPGCheckout, or unset
 )
+
+// ConfirmsTerminal is the AnnConfirms value for a production write: it runs only with --env
+// production on the command line, and --yes confirms it only when it names one resource.
+const ConfirmsTerminal = "terminal"
+
+// ConfirmsIn returns cmd's AnnConfirms value for env, inherited like Annotation.
+func ConfirmsIn(cmd *cobra.Command, env string) string {
+	return ConfirmsValue(Annotation(cmd, AnnConfirms), env)
+}
+
+// ConfirmsValue resolves a raw AnnConfirms value for env.
+func ConfirmsValue(raw, env string) string {
+	if !strings.Contains(raw, "=") {
+		return strings.TrimSpace(raw)
+	}
+	for _, pair := range strings.Split(raw, ",") {
+		if k, v, ok := strings.Cut(pair, "="); ok && strings.TrimSpace(k) == env {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
 
 // AnnHost values.
 const (

@@ -636,7 +636,7 @@ type resetResult struct {
 func runReset(ctx context.Context, f *cmdutil.Factory) error {
 	// Print the resolved target so the confirm cannot say "sandbox" while aimed elsewhere.
 	f.ErrPrintf("Target: %s\n", f.Target())
-	if err := f.ConfirmMutation("clear all sandbox webhooks and bank accounts (and their VAs/transactions)", true); err != nil {
+	if err := f.ConfirmMutation("clear all sandbox webhooks and bank accounts (and their VAs/transactions)", "", true); err != nil {
 		return err
 	}
 

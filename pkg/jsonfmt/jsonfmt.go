@@ -7,8 +7,10 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
@@ -23,7 +25,7 @@ const (
 const minColumn = 6
 
 // ansiSeq matches only the SGR codes the CLI emits; reverse/conceal from API data must not pass.
-var ansiSeq = regexp.MustCompile("\x1b\\[(?:0|2|31|32|36)(?:;(?:0|2|31|32|36))*m")
+var ansiSeq = regexp.MustCompile("\x1b\\[(?:0|2|31|32|33|36)(?:;(?:0|2|31|32|33|36))*m")
 
 func displayWidth(s string) int {
 	return utf8.RuneCountInString(ansiSeq.ReplaceAllString(s, ""))
@@ -87,6 +89,24 @@ func stripUnsafe(s string) string {
 	return b.String()
 }
 
+// EscapeUnsafe rewrites each character Clean would strip from JSON text as a \u escape, so a
+// terminal shows that it is there without acting on it. Outside a string JSON text is ASCII and
+// its only control is the newline Indent writes, which stays.
+func EscapeUnsafe(jsonText string) string {
+	var b strings.Builder
+	b.Grow(len(jsonText))
+	for _, r := range jsonText {
+		if r == '\n' || (r >= 0x20 && r != 0x7f && (r < 0x80 || r > 0x9f) && !isInvisibleFormat(r)) {
+			b.WriteRune(r)
+			continue
+		}
+		for _, u := range utf16.Encode([]rune{r}) {
+			fmt.Fprintf(&b, "\\u%04x", u)
+		}
+	}
+	return b.String()
+}
+
 // isInvisibleFormat reports bidi, invisible, separator and tag characters. ZWJ/ZWNJ stay.
 func isInvisibleFormat(r rune) bool {
 	switch r {
@@ -107,8 +127,16 @@ type Table struct {
 	// MaxWidth is the width to fit; 0 means no limit.
 	MaxWidth int
 
-	cuttable map[string]bool // headers of the columns fit may cut
+	cuttable  map[string]bool // headers of the columns fit may cut
+	tailed    map[string]bool // headers of the columns whose cells may join a text and a tail
+	droppable []string        // headers of the columns a too-wide table leaves out, first to go first
 }
+
+// TailSep joins the text of a cell in a KeepsTail column to a tail kept whole when the cell is
+// cut, such as an item's code after its name: Render cuts the text before the tail. Clean the
+// parts first, since cleaning the joined cell would strip the separator. In any other column a
+// TailSep is an ordinary control character and is stripped, so API data cannot forge a tail.
+const TailSep = "\x1f"
 
 // NewTable creates a table with the given column headers.
 func NewTable(headers ...string) *Table {
@@ -126,6 +154,24 @@ func (t *Table) Truncatable(headers ...string) *Table {
 	return t
 }
 
+// KeepsTail names the Truncatable columns whose cells may join a text and a tail with TailSep.
+func (t *Table) KeepsTail(headers ...string) *Table {
+	if t.tailed == nil {
+		t.tailed = make(map[string]bool, len(headers))
+	}
+	for _, h := range headers {
+		t.tailed[h] = true
+	}
+	return t
+}
+
+// Droppable names the columns a table still wider than MaxWidth after cutting leaves out, in the
+// order they go. Only a summary column belongs here: the full record stays in get and --json.
+func (t *Table) Droppable(headers ...string) *Table {
+	t.droppable = append(t.droppable, headers...)
+	return t
+}
+
 // AddRow appends one row of cells.
 func (t *Table) AddRow(cells ...string) {
 	t.rows = append(t.rows, cells)
@@ -133,64 +179,138 @@ func (t *Table) AddRow(cells ...string) {
 
 // Render writes the table to w, aligned by visible width.
 func (t *Table) Render(w io.Writer) error {
-	widths := make([]int, len(t.headers))
-	measure := func(cells []string) {
-		for i := 0; i < len(widths) && i < len(cells); i++ {
-			if d := displayWidth(cells[i]); d > widths[i] {
-				widths[i] = d
+	// Machine formats bypass Render, so raw values survive there.
+	headers := make([]string, len(t.headers))
+	for i, h := range t.headers {
+		headers[i] = stripUnsafe(h)
+	}
+	rows := make([][]string, len(t.rows))
+	tails := make([][]string, len(t.rows))
+	for r, row := range t.rows {
+		rows[r] = make([]string, len(row))
+		tails[r] = make([]string, len(row))
+		for i, c := range row {
+			if i < len(t.headers) && t.tailed[t.headers[i]] {
+				if cut := strings.LastIndex(c, TailSep); cut >= 0 {
+					tails[r][i] = stripUnsafe(c[cut+len(TailSep):])
+					c = c[:cut] + tails[r][i]
+				}
+			}
+			rows[r][i] = stripUnsafe(c)
+		}
+	}
+
+	for {
+		widths, floors := t.measure(headers, rows, tails)
+		drop := t.nextDrop(headers, widths, floors)
+		if drop < 0 {
+			return t.write(w, headers, rows, tails, widths, t.fit(widths, floors))
+		}
+		headers = removeColumn(headers, drop)
+		for r := range rows {
+			rows[r], tails[r] = removeColumn(rows[r], drop), removeColumn(tails[r], drop)
+		}
+	}
+}
+
+// measure returns each column's widest cell, and the width fit may cut it to: a Truncatable
+// column stops at its header, minColumn, or what keeps its widest tail whole; any other at its width.
+func (t *Table) measure(headers []string, rows, tails [][]string) (widths, floors []int) {
+	widths = make([]int, len(headers))
+	tailWidths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = displayWidth(h)
+	}
+	for r, row := range rows {
+		for i := 0; i < len(widths) && i < len(row); i++ {
+			widths[i] = max(widths[i], displayWidth(row[i]))
+			if tails[r][i] != "" {
+				tailWidths[i] = max(tailWidths[i], displayWidth(tails[r][i])+2)
 			}
 		}
 	}
-	// Machine formats bypass Render, so raw values survive there.
-	clean := func(cells []string) []string {
-		out := make([]string, len(cells))
-		for i, c := range cells {
-			out[i] = stripUnsafe(c)
+	floors = make([]int, len(widths))
+	for i, w := range widths {
+		floors[i] = w
+		if t.cuttable[headers[i]] {
+			floors[i] = min(w, max(minColumn, displayWidth(headers[i]), tailWidths[i]))
 		}
-		return out
 	}
-	headers := clean(t.headers)
-	rows := make([][]string, len(t.rows))
-	for i, r := range t.rows {
-		rows[i] = clean(r)
-	}
+	return widths, floors
+}
 
-	measure(headers)
-	for _, row := range rows {
-		measure(row)
+// nextDrop returns the column to leave out when even the cut table is wider than MaxWidth, or -1.
+func (t *Table) nextDrop(headers []string, widths, floors []int) int {
+	if t.MaxWidth <= 0 || len(t.droppable) == 0 {
+		return -1
 	}
-	gap := t.fit(widths)
+	narrowest := narrowGap * (len(widths) - 1)
+	for _, f := range floors {
+		narrowest += f
+	}
+	if narrowest <= t.MaxWidth {
+		return -1
+	}
+	for _, d := range t.droppable {
+		if i := slices.Index(headers, d); i >= 0 {
+			return i
+		}
+	}
+	return -1
+}
 
+func removeColumn(cells []string, i int) []string {
+	if i >= len(cells) {
+		return cells
+	}
+	return append(cells[:i:i], cells[i+1:]...)
+}
+
+func (t *Table) write(w io.Writer, headers []string, rows, tails [][]string, widths []int, gap int) error {
 	var b strings.Builder
-	writeRow := func(cells []string, color func(string) string) {
+	writeRow := func(cells, tails []string, color func(string) string) {
+		var line strings.Builder
 		for i := range widths {
-			cell := ""
+			cell, tail := "", ""
 			if i < len(cells) {
 				cell = cells[i]
 			}
-			cell = Truncate(cell, widths[i])
+			if i < len(tails) {
+				tail = tails[i]
+			}
+			cell = cutKeepingTail(cell, tail, widths[i])
 			pad := widths[i] - displayWidth(cell)
-			if color != nil {
+			// A colored empty cell would end the line in codes that hide its padding from the trim.
+			if color != nil && cell != "" {
 				cell = color(cell)
 			}
-			b.WriteString(cell)
+			line.WriteString(cell)
 			if i < len(widths)-1 {
-				b.WriteString(strings.Repeat(" ", pad+gap))
+				line.WriteString(strings.Repeat(" ", pad+gap))
 			}
 		}
+		b.WriteString(strings.TrimRight(line.String(), " "))
 		b.WriteByte('\n')
 	}
-	writeRow(headers, t.HeaderColor)
-	for _, row := range rows {
-		writeRow(row, nil)
+	writeRow(headers, nil, t.HeaderColor)
+	for r, row := range rows {
+		writeRow(row, tails[r], nil)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
+// cutKeepingTail cuts cell to width, cutting the text before its tail when the tail fits.
+func cutKeepingTail(cell, tail string, width int) string {
+	if tail == "" || displayWidth(cell) <= width || width < displayWidth(tail)+2 {
+		return Truncate(cell, width)
+	}
+	return Truncate(strings.TrimSuffix(cell, tail), width-displayWidth(tail)) + tail
+}
+
 // fit shrinks the gap, then the widest Truncatable column, and returns the gap.
-// A table that still cannot fit wraps.
-func (t *Table) fit(widths []int) int {
+// A table that still cannot fit overflows the line.
+func (t *Table) fit(widths, floors []int) int {
 	total := func(gap int) int {
 		sum := gap * (len(widths) - 1)
 		for _, w := range widths {
@@ -200,13 +320,6 @@ func (t *Table) fit(widths []int) int {
 	}
 	if t.MaxWidth <= 0 || total(columnGap) <= t.MaxWidth {
 		return columnGap
-	}
-	floors := make([]int, len(widths))
-	for i, w := range widths {
-		floors[i] = w
-		if t.cuttable[t.headers[i]] {
-			floors[i] = min(w, max(minColumn, displayWidth(t.headers[i])))
-		}
 	}
 	for over := total(narrowGap) - t.MaxWidth; over > 0; over-- {
 		widest := -1

@@ -11,8 +11,7 @@ other code passes through with the server's message, which may be in Vietnamese,
 |---|:--:|---|
 | `unauthorized` | 4 | The session expired or was revoked. Run `sepay login` |
 | `access_revoked` | 4 | Access to the `webhook listen` stream was revoked after it opened. Run `sepay login`; the CLI does not reconnect |
-| `insufficient_scope` | 5 | The token lacks a scope on production. Run `sepay auth refresh --scopes <scope>` |
-| `otp_required` | 7 | Do the action in the web app |
+| `insufficient_scope` | 5 | The token lacks a scope on production. Run `sepay login --scopes <scope>` |
 | `feature_disabled` | 8 | The CLI is not enabled for your company on production. SePay turns it on |
 | `test_mode_disabled` | 8 | Test Mode is off for your company. SePay turns it on; logging in again does not help. A `pg`, `bankhub` or `einvoice` credential already issued keeps working until it expires |
 | `sandbox_not_provisioned` | 8 | Your company has no sandbox yet. SePay provisions it |
@@ -32,13 +31,14 @@ other code passes through with the server's message, which may be in Vietnamese,
 | `replay_rate_limited` | 1 | Production `webhook replay`: the transaction reached SePay's replay cap, counted across its webhooks. Not retried; the message says when to try again |
 | `replay_busy` | 1 | Another replay of the same transaction is still running. Retry shortly |
 | `unsupported_api_version` | 1 | The CLI is too old for the server. Upgrade |
-| `not_found` | 1 | The endpoint exists only in the sandbox; the server's message says what to do |
+| `not_found` | 1 | No such record (`pg order get`, `einvoice invoice get`), or an endpoint that exists only in the sandbox; the server's message says which |
 | `paycode_prefix_exists` | 1 | The company already has a pay-code structure with that prefix, letter case aside. Change it with `sepay paycode update --structure <prefix>` |
 | `paycode_version_conflict` | 1 | The pay-code configuration changed since it was read; nothing was saved. Run the command again, with a new `--idempotency-key` if you passed one |
 
 ### Sandbox product credentials
 
-A `pg`, `bankhub` or `einvoice` command first asks the SePay API for its product credential. A
+A `pg`, `bankhub` or `einvoice` command first asks the SePay API for its product credential, except
+`pg order list|get`, `einvoice invoice list|get`, `pg ipn` and `bankhub ipn`, which use your login. A
 failure there answers 500 with one generic message, so only the code tells the steps apart.
 
 | Code | Exit | Meaning and fix |
@@ -56,9 +56,9 @@ hold separate data. Check the `env:` line on stderr.
 ### Retries before `network_error`
 
 SePay API calls are retried up to 3 times, except a create without an idempotency key and a
-conditional write (`paycode update`), which may already have been applied. Sign-in, token and
-`pg`, `bankhub`, `einvoice` calls are not retried, and `webhook listen` reconnects by itself. A
-request you cancel with Ctrl+C is `interrupted`.
+conditional write (`paycode update`), which may already have been applied. Sign-in and token
+calls, and the `pg`, `bankhub`, `einvoice` calls that use a product credential, are not retried;
+`webhook listen` reconnects by itself. A request you cancel with Ctrl+C is `interrupted`.
 
 ## Bank Hub and e-invoice
 
@@ -71,8 +71,8 @@ sent it.
 | `EINVOICE_DOCUMENT_NOT_FOUND` | 1 | no invoice with that reference code |
 | `EINVOICE_ACCOUNT_NOT_FOUND` | 1 | this company has no e-invoice provider account |
 
-`bankhub link-token get` and `pg order get` return the generic code `error`, so they print the
-server's message.
+`bankhub link-token get` on sandbox returns the generic code `error`, and `pg order get` and
+`einvoice invoice get` return `not_found`; either way they print the server's message.
 
 The Bank Hub credential is short-lived and the CLI renews it on a `401`. A `401` that persists
 means the merchant is inactive or not enabled for hosted link.

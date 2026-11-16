@@ -101,7 +101,7 @@ A forward your handler cannot receive is re-sent locally on SePay's schedule
 	}
 	listen.AddFlags(cmd)
 	listen.DescribeEvents(cmd, IPNEvents)
-	cmd.Flags().StringVar(&order, "order", "", "Only forward IPN for this order id")
+	cmd.Flags().StringVar(&order, "order", "", "Only forward IPN for this pay code")
 	return cmdutil.Annotate(cmd, map[string]string{
 		cmdutil.AnnGuidance: "Gateway IPN has no signature — a static X-Secret-Key header is its only auth, " +
 			"so do not write an HMAC check against it. Needs an endpoint set by `sepay pg ipn set`.",
@@ -282,7 +282,7 @@ current URL is shown before the prompt.
 				return err
 			}
 
-			if err := f.ConfirmMutation("set the gateway IPN URL", true); err != nil {
+			if err := f.ConfirmMutation("set the gateway IPN URL", "", true); err != nil {
 				return err
 			}
 

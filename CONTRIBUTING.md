@@ -18,8 +18,8 @@ go through [SECURITY.md](SECURITY.md), not public issues.
 
 ## Setup and the local gate
 
-You need [Go](https://go.dev/dl/) 1.27.3 or later. With the default `GOTOOLCHAIN=auto`, an older
-Go (1.21+) downloads 1.27.3 itself. Nothing else needs installing: `make check` runs the pinned
+You need [Go](https://go.dev/dl/) 1.27.4 or later. With the default `GOTOOLCHAIN=auto`, an older
+Go (1.21+) downloads 1.27.4 itself. Nothing else needs installing: `make check` runs the pinned
 [`golangci-lint`](https://golangci-lint.run/) v2.15.0 and gofumpt through `go run`.
 
 ```bash
@@ -30,9 +30,8 @@ make check        # run before every push
 ```
 
 `make check` is the gate CI runs: `gofumpt` (fix with `go run mvdan.cc/gofumpt@v0.12.0 -w .`), `go vet`, `golangci-lint`, `go test ./... -race` and a
-`go mod tidy` check that `go.mod`, `go.sum` and `tools/go.mod` are clean. `make leaks` runs gitleaks and
-`make vuln` runs govulncheck; both are pinned in `tools/go.mod`, a module of its own so their
-dependencies never change the binary's.
+`go mod tidy` check that `go.mod` and `go.sum` are clean. `make leaks` runs gitleaks and
+`make vuln` runs govulncheck; both are pinned in the `tool` block of `go.mod`.
 `make help` lists every target. Without a C compiler, `-race` cannot build: run `make test RACE=`.
 
 CI runs the tests on Linux, macOS and Windows. A test that depends on Unix file modes skips or guards
@@ -89,7 +88,7 @@ Do not edit `CHANGELOG.md` by hand: release-please writes it.
 
 ## Go version policy
 
-`go.mod` says `go 1.27.3`: the floor for every build, `go install` included, is the toolchain that
+`go.mod` says `go 1.27.4`: the floor for every build, `go install` included, is the toolchain that
 CI tests and govulncheck scans. Every workflow reads Go from `go.mod` (`go-version-file`), and a CI
 step fails if the installed Go differs from that line. To bump Go, change only that line.
 

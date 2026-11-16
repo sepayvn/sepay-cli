@@ -66,13 +66,13 @@ func TestConfirm_NonInteractiveNeedsYes(t *testing.T) {
 func TestConfirmProdWrite_SandboxNoOp(t *testing.T) {
 	f := promptFactory()
 	f.Global.Env = "sandbox"
-	require.NoError(t, f.ConfirmProdWrite("create webhook"))
+	require.NoError(t, f.ConfirmProdWrite("update webhook", "wh_1"))
 }
 
 func TestConfirmProdWrite_ProdNeedsConfirm(t *testing.T) {
 	f := promptFactory() // non-interactive, no --yes
 	f.Global.Env = "production"
-	err := f.ConfirmProdWrite("create webhook")
+	err := f.ConfirmProdWrite("update webhook", "wh_1")
 	require.Error(t, err)
 	assert.Equal(t, ExitUsage, ExitCodeForError(err))
 }
@@ -80,7 +80,7 @@ func TestConfirmProdWrite_ProdNeedsConfirm(t *testing.T) {
 func TestConfirmProdWrite_ProdYesProceedsWithBanner(t *testing.T) {
 	ios, _, _, errOut := iostreams.Test()
 	f := &Factory{IOStreams: ios, Global: &GlobalOptions{Env: "production", Yes: true}}
-	require.NoError(t, f.ConfirmProdWrite("create webhook"))
+	require.NoError(t, f.ConfirmProdWrite("update webhook", "wh_1"))
 	assert.Contains(t, errOut.String(), "live")
 	assert.Contains(t, errOut.String(), "PRODUCTION")
 }
@@ -89,7 +89,7 @@ func TestConfirmProdWrite_MachineOutputKeepsStderrForTheErrorObject(t *testing.T
 	for _, output := range []string{"json", "yaml"} {
 		ios, _, out, errOut := iostreams.Test()
 		f := &Factory{IOStreams: ios, Global: &GlobalOptions{Env: "production", Yes: true, Output: output}}
-		require.NoError(t, f.ConfirmProdWrite("create webhook"))
+		require.NoError(t, f.ConfirmProdWrite("update webhook", "wh_1"))
 		assert.Empty(t, errOut.String(), output)
 		assert.Empty(t, out.String(), output)
 	}
@@ -104,12 +104,12 @@ func TestConfirmProdWrite_WarningFollowsThePrompt(t *testing.T) {
 		ios.SetStdoutTTY(true)
 		in.WriteString("y")
 		f := &Factory{IOStreams: ios, Global: &GlobalOptions{Env: "production", Yes: yes}}
-		require.NoError(t, f.ConfirmProdWrite("create webhook"))
+		require.NoError(t, f.ConfirmProdWrite("update webhook", "wh_1"))
 		if yes {
-			assert.Contains(t, errOut.String(), "! live: create webhook targets PRODUCTION")
+			assert.Contains(t, errOut.String(), "! live: update webhook targets PRODUCTION")
 			assert.Empty(t, out.String())
 		} else {
-			assert.Contains(t, out.String(), "! live: create webhook targets PRODUCTION")
+			assert.Contains(t, out.String(), "! live: update webhook targets PRODUCTION")
 			assert.Empty(t, errOut.String())
 		}
 	}
@@ -130,8 +130,42 @@ func TestConfirmProdWrite_EnvBannerComesBeforeTheWarning(t *testing.T) {
 	noun.AddCommand(verb)
 	f.BindCommand(verb)
 
-	require.NoError(t, f.ConfirmProdWrite("create API key"))
+	require.NoError(t, f.ConfirmProdWrite("create API key", ""))
 	assert.Equal(t, "env: production\n! live: create API key targets PRODUCTION\n", errOut.String())
+}
+
+// paycode update and webhook replay read before their confirm, so their client exists, and would
+// have printed the env line, before the "! live:" line that --yes must print first.
+func TestConfirmProdWrite_YesPrintsTheWarningBeforeTheEnvOfAReadFirst(t *testing.T) {
+	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
+	f := New()
+	ios, _, _, errOut := iostreams.Test()
+	f.IOStreams = ios
+	f.Global.Output = "table"
+	f.Global.Env = "production"
+	f.Global.Yes = true
+
+	require.NoError(t, f.CheckProdWrite("update pay code", "DH"))
+	_, err := f.NewAPIClient()
+	require.Error(t, err, "no stored login")
+	assert.Empty(t, errOut.String(), "the env line waits for the warning")
+	require.NoError(t, f.ConfirmProdWrite("update pay code", "DH"))
+	assert.Equal(t, "! live: update pay code targets PRODUCTION\nenv: production\n", errOut.String())
+}
+
+func TestConfirmProdWrite_DryRunDoesNotHoldTheEnvLine(t *testing.T) {
+	t.Setenv("SEPAY_CONFIG_DIR", t.TempDir())
+	f := New()
+	ios, _, _, errOut := iostreams.Test()
+	f.IOStreams = ios
+	f.Global.Output = "table"
+	f.Global.Env = "production"
+	f.Global.Yes = true
+	f.Global.DryRun = true
+
+	require.NoError(t, f.CheckProdWrite("update pay code", "DH"))
+	_, _ = f.NewAPIClient()
+	assert.Equal(t, "env: production\n", errOut.String())
 }
 
 func TestSecretFromFlag_WarnsOnlyForAnInlineValue(t *testing.T) {
