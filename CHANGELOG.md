@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.9](https://github.com/sepayvn/sepay-cli/compare/v0.1.8...v0.1.9) (2026-11-17)
+
+
+### Bug Fixes
+
+* **npm:** point the unsupported-platform error at the install page ([7ea8c79](https://github.com/sepayvn/sepay-cli/commit/7ea8c79fb6359396bfe7c5744323b80f923c9909))
+
+
+### Documentation
+
+* **npm:** translate the npm README to Vietnamese and link developer.sepay.vn ([7ea8c79](https://github.com/sepayvn/sepay-cli/commit/7ea8c79fb6359396bfe7c5744323b80f923c9909))
+
 ## [0.1.8](https://github.com/sepayvn/sepay-cli/compare/v0.1.7...v0.1.8) (2026-11-16)
 
 
