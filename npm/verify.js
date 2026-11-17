@@ -59,15 +59,20 @@ const version = wrapper.version;
 check(!!version && version !== "0.0.0", "wrapper version is still 0.0.0 — build did not stamp it");
 check(!wrapper.scripts, "wrapper declares scripts — no script may run at install time");
 
-// The error message and the npm page must send a user to the same documentation.
+// The error message and the npm page must send a user to the same documentation page.
+// The English error links the /en/ page and the Vietnamese README the /vi/ one, so the
+// locale segment is ignored when comparing.
 const docsInBin = fs
   .readFileSync(path.join(wrapperDir, "bin", CLI + ".js"), "utf8")
   .match(/const DOCS = "([^"]+)";/);
 const docsInReadme = fs
   .readFileSync(path.join(wrapperDir, "README.md"), "utf8")
-  .match(/^Documentation: <([^>]+)>$/m);
+  .match(/^Tài liệu: <([^>]+)>$/m);
+function sameDoc(url) {
+  return url.replace(/^(https:\/\/developer\.sepay\.vn)\/(en|vi)\//, "$1/");
+}
 check(
-  !!docsInBin && !!docsInReadme && docsInBin[1] === docsInReadme[1],
+  !!docsInBin && !!docsInReadme && sameDoc(docsInBin[1]) === sameDoc(docsInReadme[1]),
   "bin/" + CLI + ".js and README.md name different documentation URLs: " +
     (docsInBin ? docsInBin[1] : "none") + " vs " + (docsInReadme ? docsInReadme[1] : "none")
 );
